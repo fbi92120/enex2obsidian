@@ -343,13 +343,21 @@ def test_ct10_en_todo_checked():
 # ---------------------------------------------------------------------------
 
 def test_ct11_image_embed():
-    """CT-11: en-media with image/png produces Obsidian embed ![[image.png]]."""
-    pytest.skip("Étape 5 de la séquence")
+    """CT-11: en-media with image/png produces {{ATTACHMENT:hash}} placeholder."""
+    from src.content_converter import convert_content
+
+    xhtml = '<en-note><en-media hash="abc123" type="image/png"/></en-note>'
+    result = convert_content(xhtml)
+    assert "{{ATTACHMENT:abc123}}" in result
 
 
 def test_ct12_pdf_link():
-    """CT-12: en-media with application/pdf produces [document.pdf](attachments/document.pdf)."""
-    pytest.skip("Étape 5 de la séquence")
+    """CT-12: en-media with application/pdf produces {{ATTACHMENT:hash}} placeholder."""
+    from src.content_converter import convert_content
+
+    xhtml = '<en-note><en-media hash="def456" type="application/pdf"/></en-note>'
+    result = convert_content(xhtml)
+    assert "{{ATTACHMENT:def456}}" in result
 
 
 # ---------------------------------------------------------------------------
