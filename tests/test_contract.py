@@ -712,3 +712,92 @@ def test_ct17_note_without_title():
 def test_ct18_empty_tag_after_normalization():
     """CT-18: Tag that normalizes to empty string is not included in the tags list."""
     pytest.skip("Étape 4 de la séquence")
+
+
+# ---------------------------------------------------------------------------
+# CT-16b — MIME allowlist filtering (SPECS.md V1.6)
+# ---------------------------------------------------------------------------
+
+def test_ct16b_mime_excluded_svg(tmp_path):
+    """CT-16b: SVG (image/svg+xml) hors allowlist → skipped_mime, rien écrit sur disque."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    handler = AttachmentHandler(
+        target_dir=tmp_path / "attachments",
+        allowed_mime_types={"application/pdf", "image/jpeg", "image/png"},
+    )
+    raw = RawAttachment(
+        data_base64=base64.b64encode(b"<svg>fake</svg>").decode(),
+        mime="image/svg+xml",
+        file_name="logo.svg",
+        hash=None,
+    )
+    result = handler.handle(raw, note_title="test", note_guid="guid1")
+    assert result.status == "skipped_mime"
+    assert result.final_filename is None
+    assert result.mime == "image/svg+xml"
+    assert "image/svg+xml" in (result.error_detail or "")
+    assert result.hash != ""
+    assert result.size_bytes is not None and result.size_bytes > 0
+    assert not (tmp_path / "attachments" / "logo.svg").exists()
+
+
+def test_attachment_handler_mime_allowlist_none_means_no_filter(tmp_path):
+    """Si allowed_mime_types=None (défaut), aucun filtrage MIME — SVG passe normalement."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    handler = AttachmentHandler(target_dir=tmp_path / "attachments")
+    raw = RawAttachment(
+        data_base64=base64.b64encode(b"<svg>fake</svg>").decode(),
+        mime="image/svg+xml",
+        file_name="logo.svg",
+        hash=None,
+    )
+    result = handler.handle(raw, note_title="test", note_guid="guid1")
+    assert result.status == "ok"
+    assert result.final_filename == "logo.svg"
+
+
+def test_attachment_handler_mime_absent_with_allowlist(tmp_path):
+    """RawAttachment avec MIME vide + allowlist active → skipped_mime."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    handler = AttachmentHandler(
+        target_dir=tmp_path / "attachments",
+        allowed_mime_types={"application/pdf"},
+    )
+    raw = RawAttachment(
+        data_base64=base64.b64encode(b"data").decode(),
+        mime="",
+        file_name="mystery.bin",
+        hash=None,
+    )
+    result = handler.handle(raw, note_title="test", note_guid="guid1")
+    assert result.status == "skipped_mime"
+    assert "absent" in (result.error_detail or "").lower()
+
+
+def test_attachment_handler_mime_case_sensitive(tmp_path):
+    """Comparaison MIME stricte sensible à la casse (SPECS.md V1.6) — Application/PDF ne matche pas."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    handler = AttachmentHandler(
+        target_dir=tmp_path / "attachments",
+        allowed_mime_types={"application/pdf"},
+    )
+    raw = RawAttachment(
+        data_base64=base64.b64encode(b"%PDF-1.4").decode(),
+        mime="Application/PDF",
+        file_name="doc.pdf",
+        hash=None,
+    )
+    result = handler.handle(raw, note_title="test", note_guid="guid1")
+    assert result.status == "skipped_mime"

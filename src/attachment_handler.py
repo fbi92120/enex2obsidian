@@ -33,6 +33,7 @@ AttachmentStatus = Literal[
     "ok",               # décodage et écriture réussis
     "skipped_size",     # > size_limit_mb, fichier non écrit
     "skipped_existing", # même hash MD5 déjà traité dans cette session (idempotence)
+    "skipped_mime",     # MIME hors allowlist, fichier non écrit (V1.6)
     "corrupted_base64", # base64 invalide, fichier non écrit
     "missing_hash",     # hash MD5 non calculable (data_base64 absent)
     "traversal_blocked", # chemin résolu hors target_dir, fichier non écrit
@@ -67,15 +68,25 @@ class AttachmentHandler:
     (même contenu → même fichier, pas de réécriture, pas de collision).
     """
 
-    def __init__(self, target_dir: Path, size_limit_mb: int = 200) -> None:
+    def __init__(
+        self,
+        target_dir: Path,
+        size_limit_mb: int = 200,
+        allowed_mime_types: set[str] | None = None,
+    ) -> None:
         """
         Args:
             target_dir: dossier de destination (typiquement [vault]/[carnet]/attachments/).
                         Créé automatiquement lors du premier handle() si absent.
             size_limit_mb: plafond de taille par pièce jointe en Mo (défaut 200).
+            allowed_mime_types: ensemble des MIME autorisés (allowlist).
+                Si None (défaut), aucun filtrage MIME — tous les types passent.
+                Si un set, comparaison stricte sensible à la casse (SPECS.md V1.6).
+                Un set vide filtre toutes les pièces jointes.
         """
         self._target_dir = Path(target_dir)
         self._size_limit_bytes = size_limit_mb * 1024 * 1024
+        self._allowed_mime_types = allowed_mime_types
         # hash MD5 hexdigest → nom de fichier final écrit (idempotence intra-session)
         self._hash_to_filename: dict[str, str] = {}
 
@@ -138,6 +149,25 @@ class AttachmentHandler:
         # Étape 2 : Calcul MD5 sur les bytes décodés
         md5_hash = hashlib.md5(decoded_bytes).hexdigest()
         size_bytes = len(decoded_bytes)
+
+        # Étape 3bis : Filtrage MIME par allowlist (V1.6)
+        if self._allowed_mime_types is not None:
+            if not mime or mime not in self._allowed_mime_types:
+                detail = (
+                    "MIME absent du <resource>"
+                    if not mime
+                    else f"MIME '{mime}' hors allowlist"
+                )
+                return self._error(
+                    hash_val=md5_hash,
+                    status="skipped_mime",
+                    mime=mime,
+                    original_filename=original_filename,
+                    size_bytes=size_bytes,
+                    error_detail=detail,
+                    note_title=note_title,
+                    note_guid=note_guid,
+                )
 
         # Étape 3 : Vérification taille
         if size_bytes > self._size_limit_bytes:
