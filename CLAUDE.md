@@ -1,9 +1,9 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.3
+**Version** : 1.4
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : Étape 5/14 validée (content_converter) — étape 6/14 à démarrer (attachment_handler)
+**Statut** : Étape 6/14 validée (attachment_handler) — étape 7/14 à démarrer (notebook_selector)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
