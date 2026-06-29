@@ -3,7 +3,7 @@
 **Version** : 1.5
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : Étape 6/14 amendée (filtrage MIME) — étape 7/14 à démarrer (notebook_selector)
+**Statut** : Étape 6/14 V1.6 validée (attachment_handler + MIME allowlist) — étape 7/14 à démarrer (notebook_selector)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
