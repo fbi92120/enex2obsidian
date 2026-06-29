@@ -75,12 +75,34 @@ CT01_ENEX_XML = """\
 <updated>20240401T141500Z</updated>
 <tag>réunions</tag>
 </note>
+<note>
+<title>Note avec PJ</title>
+<guid>abc-123-def-456</guid>
+<content><![CDATA[<en-note><div>Voir document attaché.</div></en-note>]]></content>
+<created>20240315T092300Z</created>
+<updated>20240315T092500Z</updated>
+<tag>test</tag>
+<note-attributes>
+  <source-url>https://example.com/doc</source-url>
+</note-attributes>
+<resource>
+  <data encoding="base64">SGVsbG8gV29ybGQ=</data>
+  <mime>application/pdf</mime>
+  <resource-attributes>
+    <file-name>document.pdf</file-name>
+  </resource-attributes>
+</resource>
+</note>
 </en-export>
 """
 
 
 def test_ct01_parse_reference_enex(tmp_path):
-    """CT-01: iter_notes() yields 2 RawNote with correct fields from an inline ENEX fixture."""
+    """CT-01: iter_notes() yields 3 RawNote with correct fields from an inline ENEX fixture.
+
+    Vérifie : title, created, updated, tags, content_xhtml, guid, source_url,
+    attachments (mime, file_name, data_base64, hash).
+    """
     from src.enex_parser import iter_notes, RawNote
     from collections.abc import Iterator
 
@@ -91,9 +113,9 @@ def test_ct01_parse_reference_enex(tmp_path):
     assert isinstance(result, Iterator)
 
     notes = list(result)
-    assert len(notes) == 2
+    assert len(notes) == 3
 
-    # Note 1
+    # Note 1 — champs de base + source-url vide
     n1 = notes[0]
     assert isinstance(n1, RawNote)
     assert n1.title == "Facture EDF mars 2024"
@@ -102,15 +124,96 @@ def test_ct01_parse_reference_enex(tmp_path):
     assert n1.tags == ["factures", "EDF"]
     assert n1.content_xhtml is not None
     assert "Facture reçue le 15 mars." in n1.content_xhtml
+    assert n1.source_url == ""        # balise présente mais vide → "" (correction 5)
     assert n1.parse_errors == []
 
-    # Note 2
+    # Note 2 — sans note-attributes (source_url absent)
     n2 = notes[1]
     assert n2.title == "Réunion bilan Q1"
     assert n2.created == "20240401T140000Z"
     assert n2.updated == "20240401T141500Z"
     assert n2.tags == ["réunions"]
+    assert n2.source_url is None      # balise absente → None (correction 5)
     assert n2.parse_errors == []
+
+    # Note 3 — guid, source_url avec valeur, attachments
+    n3 = notes[2]
+    assert n3.title == "Note avec PJ"
+    assert n3.guid == "abc-123-def-456"
+    assert n3.source_url == "https://example.com/doc"
+    assert len(n3.attachments) == 1
+    att = n3.attachments[0]
+    assert att.mime == "application/pdf"
+    assert att.file_name == "document.pdf"
+    assert att.data_base64 == "SGVsbG8gV29ybGQ="
+    assert att.hash is None           # hash toujours None ici (correction 1)
+    assert n3.parse_errors == []
+
+
+def test_ct01a_attachment_hash_is_none(tmp_path):
+    """CT-01a: RawAttachment.hash est toujours None après parsing — jamais fabriqué."""
+    from src.enex_parser import iter_notes
+
+    enex_file = tmp_path / "test.enex"
+    enex_file.write_text(CT01_ENEX_XML, encoding="utf-8")
+
+    notes = list(iter_notes(enex_file))
+    n3 = notes[2]
+    assert n3.attachments[0].hash is None
+
+
+def test_ct01b_xxe_entity_ignored(tmp_path):
+    """CT-01b: Entité XML externe dans le DOCTYPE ignorée — pas de lecture /etc/passwd."""
+    from src.enex_parser import iter_notes
+
+    xxe_xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<en-export>
+<note>
+<title>Test XXE</title>
+<content><![CDATA[<en-note><div>contenu</div></en-note>]]></content>
+<created>20240101T000000Z</created>
+</note>
+</en-export>
+"""
+    enex_file = tmp_path / "xxe.enex"
+    enex_file.write_text(xxe_xml, encoding="utf-8")
+
+    # Le parser ne doit pas crasher et doit retourner la note normalement
+    notes = list(iter_notes(enex_file))
+    assert len(notes) == 1
+    assert notes[0].title == "Test XXE"
+
+
+def test_ct01c_source_url_empty_vs_absent(tmp_path):
+    """CT-01c: <source-url></source-url> → '' ; balise absente → None."""
+    from src.enex_parser import iter_notes
+
+    xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+<note>
+<title>Avec source-url vide</title>
+<content><![CDATA[<en-note/>]]></content>
+<created>20240101T000000Z</created>
+<note-attributes><source-url></source-url></note-attributes>
+</note>
+<note>
+<title>Sans source-url</title>
+<content><![CDATA[<en-note/>]]></content>
+<created>20240101T000000Z</created>
+</note>
+</en-export>
+"""
+    enex_file = tmp_path / "test.enex"
+    enex_file.write_text(xml, encoding="utf-8")
+
+    notes = list(iter_notes(enex_file))
+    assert notes[0].source_url == ""    # présente mais vide
+    assert notes[1].source_url is None  # absente
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.3
+**Version** : 1.4
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : V1.3 — Alignement de la spec sur l'approche segmentaire pour la détection de path traversal
+**Statut** : V1.4 — Corrections post-audit enex_parser : protection XXE, hash de pièce jointe non inventé, tolérance par note renforcée, distinction balise absente vs vide
 **Repo** : à créer
 
 ---
@@ -79,7 +79,8 @@ Conçu pour un usage personnel ponctuel — migration unique d'un corpus d'envir
 
 ```
 Python 3.12 via .venv/ (venv local, PEP 668-compliant)
-lxml (mode recover=True)       # parsing XML ENEX tolérant aux erreurs
+lxml (iterparse, resolve_entities=False, no_network=True, huge_tree=False, recover=True)
+                               # parsing XML ENEX : streaming, sécurisé (XXE désactivé), tolérant
 markdownify                    # conversion XHTML → Markdown
 python-slugify                 # génération slug ASCII depuis titres
 python-dateutil                # parsing dates ISO 8601 Evernote
@@ -88,7 +89,7 @@ pyyaml                         # lecture config.yml + écriture frontmatter YAML
 
 Aucune dépendance réseau. Aucun token, aucune clé API.
 
-Choix de `lxml` plutôt que `xml.etree.ElementTree` : performance sur les `.enex` volumineux (corpus de 8000+ notes attendu en V2), mode `recover=True` natif pour parsing tolérant (cohérent avec la constitution règle 1 — aucun arrêt sur erreur).
+Choix de `lxml` plutôt que `xml.etree.ElementTree` : performance sur les `.enex` volumineux (corpus de 8000+ notes attendu en V2), mode `recover=True` natif pour parsing tolérant (cohérent avec la constitution règle 1 — aucun arrêt sur erreur). Configuration explicite `resolve_entities=False, no_network=True` pour bloquer les attaques XXE à l'entrée du pipeline.
 
 ### Structure du repo
 
@@ -411,6 +412,7 @@ Avant toute écriture de fichier :
 | Note sans titre | Slug généré depuis `evernote_guid` : `note-[8-premiers-caractères-guid].md`. Le frontmatter `title:` est `""`. |
 | Note sans contenu (pièce jointe uniquement) | `.md` produit avec frontmatter + lien/embed vers la pièce jointe. Aucun corps de texte. |
 | Note avec `created` ou `updated` absent | Champ frontmatter vide `""`. Pas de date inventée. |
+| Balise XML absente vs balise vide | Balise absente → champ Python `None`. Balise présente mais vide (`<tag></tag>`) → champ Python `""`. La distinction est préservée verbatim par `enex_parser.py` ; `metadata_extractor.py` traite les deux cas. |
 | Note sans tags | `tags: []` dans le frontmatter. |
 | Pièce jointe sans nom (`<file-name>` absent) | Nom généré : `attachment-[hash-8-premiers-caractères].[extension-inférée-depuis-mime]`. Si mime inconnu : extension `.bin`. |
 | Pièce jointe > `attachment_size_limit_mb` (200 Mo par défaut) | Log erreur (carnet, note, fichier, taille). Pièce jointe NON copiée. Le `.md` contient à l'emplacement : `[pièce jointe ignorée : taille > N Mo, voir log]`. |
@@ -681,8 +683,9 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 
 ---
 
-*Fin des spécifications V1.3*
+*Fin des spécifications V1.4*
 *Amendement V1.1 : stack XML actée (lxml), plafond pièce jointe à 200 Mo, fixture de test = carnet réel via variable d'environnement*
 *Amendement V1.2 : casse conservée pour le slug ASCII (alignement avec les exemples — Facture-EDF-mars-2024, pas facture-edf-mars-2024)*
 *Amendement V1.3 : alignement de la spec sur l'approche segmentaire de path traversal.*
+*Amendement V1.4 : corrections post-audit du module enex_parser — protection XXE (resolve_entities=False, no_network=True), hash RawAttachment toujours None, tolérance par note via try/except, distinction balise absente (None) vs vide ("").*
 *Document à consommer directement par Claude Code après validation humaine.*
