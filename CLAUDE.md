@@ -1,9 +1,9 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.0
+**Version** : 1.1
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : Initialisation projet — SPECS.md V1.1 validé, implémentation Claude Code à démarrer
+**Statut** : Étape 3/14 validée (enex_parser) — étape 4/14 en cours (metadata_extractor)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
@@ -79,6 +79,20 @@ Voir SPECS.md Bloc 4 pour le tableau complet. Décisions à garder en tête en p
 | `--dry-run` | Aucune écriture. Plan affiché sur stdout. |
 | Caractère dangereux dans nom pièce jointe | Sanitization + log avec mention `sanitized`. |
 | Chemin résolu hors `vault_path` | Abandon écriture + log erreur sécurité. |
+
+## Tests — Validation des modules à interface format externe
+
+**Validation par module à interface format externe**
+
+Pour tout module qui consomme ou produit un format externe (ENEX, XHTML Evernote, base64, frontmatter YAML lu par Obsidian), la validation comprend trois étapes obligatoires avant commit :
+
+1. Tests unitaires (CT-XX) sur fragments synthétiques — vérifient le contrat
+2. Audit code externe (Codex) — détecte les bugs de structure et de sécurité
+3. Test empirique sur fichier réel non synthétique — détecte les particularités du format réel que les fragments ne couvrent pas
+
+Cette règle a été extraite de l'incident enex_parser V1.5 où un bug bloquant (huge_tree=False) ne s'est manifesté que sur un vrai .enex de 91 Mo, après commit. Les fragments XML inline du test CT-01 ne pouvaient pas le détecter.
+
+Modules concernés dans la séquence V1 : enex_parser, metadata_extractor, content_converter, attachment_handler, writer.
 
 ## Carnet de référence pour les tests
 
