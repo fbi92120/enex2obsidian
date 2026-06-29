@@ -9,3 +9,5 @@ output/
 logs/
 .DS_Store
 .pytest_cache/
+.claude/
+.codex/
