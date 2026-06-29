@@ -1,48 +1,46 @@
 """
-notebook_selector — Parse carnets-a-migrer.txt and locate matching .enex files.
+notebook_selector — Parse carnets-a-migrer.txt and return the list of notebook names.
 
-Reads the notebook list file, ignores comment lines (starting with #) and blank lines,
-deduplicates notebook names (with warning via reporter), and finds the corresponding
-.enex file in source_directory using Unicode-NFC-normalized matching.
+Responsabilité unique : lire le fichier de configuration listant les carnets à migrer
+et retourner leurs noms dans l'ordre du fichier.
+
+Ne fait pas :
+  - Résolution des .enex correspondants sur disque (orchestrateur)
+  - Validation que les carnets existent (orchestrateur)
+  - Filtrage CLI --carnet (orchestrateur)
+  - Déduplication (orchestrateur, si besoin métier)
 """
 
-import os
-from typing import Optional
+from pathlib import Path
 
 
-def load_notebook_list(filepath: str) -> list:
-    """
-    Read carnets-a-migrer.txt and return the list of notebook names.
+def load_notebook_list(path: Path) -> list[str]:
+    """Lit carnets-a-migrer.txt et retourne la liste ordonnée des carnets.
 
-    Ignores lines starting with '#' (comments) and blank lines.
-    Deduplicates names — caller is responsible for logging warnings on duplicates.
+    Format du fichier :
+    - Un nom de carnet par ligne
+    - Lignes commençant par # (après strip) : commentaires, ignorées
+    - Lignes vides ou ne contenant que des espaces : ignorées
+    - Espaces en début/fin de ligne strippés ; espaces internes préservés
+    - Doublons conservés (la déduplication est la responsabilité de l'orchestrateur)
+    - Pas de commentaires inline : "Carnet # note" est un nom valide
 
     Args:
-        filepath (str): absolute path to carnets-a-migrer.txt
+        path: chemin vers carnets-a-migrer.txt
 
     Returns:
-        list[str]: notebook names verbatim (accents and spaces preserved),
-                   in file order, deduplicated.
+        Liste des noms de carnets dans l'ordre du fichier.
+        Liste vide si le fichier ne contient que des commentaires ou est vide.
 
     Raises:
-        OSError: if filepath does not exist or is not readable.
+        FileNotFoundError: si le fichier n'existe pas
+        UnicodeDecodeError: si le fichier n'est pas lisible en UTF-8
     """
-    raise NotImplementedError("Étape 7 de la séquence")
-
-
-def find_enex_file(notebook_name: str, source_dir: str) -> Optional[str]:
-    """
-    Find the .enex file in source_dir that matches notebook_name.
-
-    Matching strategy (in order):
-        1. Exact match: "{notebook_name}.enex"
-        2. NFC-normalized match: compare NFC forms of both name and filename
-
-    Args:
-        notebook_name (str): notebook name from carnets-a-migrer.txt
-        source_dir (str): directory containing .enex files
-
-    Returns:
-        str: absolute path to the matching .enex file, or None if not found.
-    """
-    raise NotImplementedError("Étape 7 de la séquence")
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        result.append(stripped)
+    return result

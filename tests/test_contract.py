@@ -801,3 +801,92 @@ def test_attachment_handler_mime_case_sensitive(tmp_path):
     )
     result = handler.handle(raw, note_title="test", note_guid="guid1")
     assert result.status == "skipped_mime"
+
+
+# ---------------------------------------------------------------------------
+# Étape 7 — notebook_selector : load_notebook_list
+# ---------------------------------------------------------------------------
+
+def test_notebook_selector_basic(tmp_path):
+    """Lecture basique : noms simples séparés par retours ligne."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("Comptabilité 2024\nBail appartement\nImpôts\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Comptabilité 2024", "Bail appartement", "Impôts"]
+
+
+def test_notebook_selector_ignores_comments(tmp_path):
+    """Les lignes commençant par # sont ignorées."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text(
+        "# Liste des carnets admin\n"
+        "Comptabilité 2024\n"
+        "# Bail appartement (en pause)\n"
+        "Impôts\n",
+        encoding="utf-8",
+    )
+    assert load_notebook_list(f) == ["Comptabilité 2024", "Impôts"]
+
+
+def test_notebook_selector_ignores_empty_lines(tmp_path):
+    """Les lignes vides ou ne contenant que des espaces sont ignorées."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("Comptabilité 2024\n\n  \nImpôts\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Comptabilité 2024", "Impôts"]
+
+
+def test_notebook_selector_strips_whitespace(tmp_path):
+    """Espaces en début/fin de ligne strippés, espaces internes préservés."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("  Comptabilité 2024  \n\tBail appartement\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Comptabilité 2024", "Bail appartement"]
+
+
+def test_notebook_selector_preserves_order(tmp_path):
+    """L'ordre des lignes du fichier est préservé."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("Zeta\nAlpha\nMu\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Zeta", "Alpha", "Mu"]
+
+
+def test_notebook_selector_preserves_duplicates(tmp_path):
+    """Les doublons sont conservés (la dédup est la responsabilité de l'orchestrateur)."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("Impôts\nImpôts\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Impôts", "Impôts"]
+
+
+def test_notebook_selector_empty_file(tmp_path):
+    """Fichier vide ou ne contenant que des commentaires → liste vide."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("# Tout est en commentaire\n# Pour l'instant\n\n", encoding="utf-8")
+    assert load_notebook_list(f) == []
+
+
+def test_notebook_selector_file_not_found(tmp_path):
+    """Fichier inexistant → FileNotFoundError."""
+    from src.notebook_selector import load_notebook_list
+    with pytest.raises(FileNotFoundError):
+        load_notebook_list(tmp_path / "n_existe_pas.txt")
+
+
+def test_notebook_selector_unicode(tmp_path):
+    """Caractères Unicode préservés (accents, ç, espaces composés)."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("Documents — Voyages\nProjet Lëtzebuerg\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Documents — Voyages", "Projet Lëtzebuerg"]
+
+
+def test_notebook_selector_hash_in_middle_kept(tmp_path):
+    """Un # qui n'est pas en début de ligne est conservé (pas de commentaire inline)."""
+    from src.notebook_selector import load_notebook_list
+    f = tmp_path / "carnets.txt"
+    f.write_text("Carnet # avec hash\n", encoding="utf-8")
+    assert load_notebook_list(f) == ["Carnet # avec hash"]
