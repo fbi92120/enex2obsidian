@@ -254,12 +254,69 @@ def test_ct05_tag_eleve_evaluation():
 
 def test_ct06_frontmatter_complete():
     """CT-06: Frontmatter for a complete note has all required fields with ISO 8601 dates."""
-    pytest.skip("Étape 4 de la séquence")
+    from src.enex_parser import RawNote
+    from src.metadata_extractor import extract_metadata, to_yaml_frontmatter
+
+    raw = RawNote(
+        title="Facture EDF mars 2024",
+        content_xhtml="<en-note><div>Contenu</div></en-note>",
+        created="20240315T092300Z",
+        updated="20240315T092500Z",
+        tags=["Facture EDF", "énergie"],
+        source_url="https://example.com",
+        guid="a1b2c3d4-1234-5678-abcd-ef0123456789",
+    )
+
+    meta = extract_metadata(raw, notebook_name="Comptabilité 2024")
+
+    assert meta.title == "Facture EDF mars 2024"
+    assert meta.created == "2024-03-15T09:23:00"
+    assert meta.updated == "2024-03-15T09:25:00"
+    assert meta.tags == ["facture-edf", "energie"]
+    assert meta.source_url == "https://example.com"
+    assert meta.evernote_notebook == "Comptabilité 2024"
+    assert meta.evernote_guid == "a1b2c3d4-1234-5678-abcd-ef0123456789"
+
+    yaml_block = to_yaml_frontmatter(meta)
+    assert yaml_block.startswith("---\n")
+    assert yaml_block.strip().endswith("---")
+    assert 'title: "Facture EDF mars 2024"' in yaml_block
+    assert "created: 2024-03-15T09:23:00" in yaml_block
+    assert "updated: 2024-03-15T09:25:00" in yaml_block
+    assert "  - facture-edf" in yaml_block
+    assert "  - energie" in yaml_block
+    assert 'source_url: "https://example.com"' in yaml_block
+    assert 'evernote_notebook: "Comptabilité 2024"' in yaml_block
+    assert 'evernote_guid: "a1b2c3d4-1234-5678-abcd-ef0123456789"' in yaml_block
 
 
 def test_ct07_frontmatter_missing_updated():
     """CT-07: Frontmatter for note without 'updated' has updated: '' (empty string, field present)."""
-    pytest.skip("Étape 4 de la séquence")
+    from src.enex_parser import RawNote
+    from src.metadata_extractor import extract_metadata, to_yaml_frontmatter
+
+    raw = RawNote(
+        title="Note sans updated",
+        content_xhtml="<en-note><div>Contenu</div></en-note>",
+        created="20240316T100000Z",
+        updated=None,
+        tags=[],
+        source_url=None,
+        guid=None,
+    )
+
+    meta = extract_metadata(raw, notebook_name="Inbox")
+
+    assert meta.updated == ""
+    assert meta.tags == []
+    assert meta.source_url == ""
+    assert meta.evernote_guid == ""
+
+    yaml_block = to_yaml_frontmatter(meta)
+    assert 'updated: ""' in yaml_block
+    assert "tags: []" in yaml_block
+    assert 'source_url: ""' in yaml_block
+    assert 'evernote_guid: ""' in yaml_block
 
 
 # ---------------------------------------------------------------------------

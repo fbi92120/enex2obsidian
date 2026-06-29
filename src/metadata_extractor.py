@@ -1,88 +1,152 @@
 """
-metadata_extractor — Extract and normalize Evernote metadata into Obsidian frontmatter.
+metadata_extractor — Normalize RawNote metadata into Obsidian frontmatter.
 
-Accepts raw note dicts from enex_parser and produces validated, normalized
-frontmatter-ready dicts. No values are invented: absent fields produce
-empty strings or empty lists per constitution rule 4.
+Responsabilité unique : transformer une RawNote (produite par enex_parser)
+en métadonnées normalisées et en bloc frontmatter YAML prêt à écrire.
+
+Ne fait pas :
+  - parsing ENEX (enex_parser.py)
+  - conversion XHTML → Markdown (content_converter.py)
+  - décodage base64 (attachment_handler.py)
+  - écriture sur disque (writer.py)
+
+Constitution règle 4 : aucune métadonnée inventée. Champ absent → "" ou [].
 """
 
-from typing import Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from dateutil import parser as dateutil_parser
+
+from src.enex_parser import RawNote
+from src.filename_normalizer import normalize_tag as fn_normalize_tag
 
 
-def extract_metadata(note_data: dict) -> dict:
-    """
-    Normalize raw note data into a clean metadata dict for frontmatter.
+@dataclass
+class NoteMetadata:
+    """Métadonnées normalisées d'une note, prêtes pour frontmatter YAML."""
 
-    Args:
-        note_data (dict): raw note dict as yielded by enex_parser.parse_enex
-
-    Returns:
-        dict with keys:
-            - title (str): verbatim Evernote title, or "" if absent
-            - created (str): ISO 8601 datetime string, or "" if absent/invalid
-            - updated (str): ISO 8601 datetime string, or "" if absent/invalid
-            - tags (list[str]): normalized tags (lowercase, ascii, hyphenated), empty if none
-            - source_url (str): URL string, or "" if absent
-            - evernote_notebook (str): notebook name verbatim (set by caller)
-            - evernote_guid (str): GUID string, or "" if absent
-    """
-    raise NotImplementedError("Étape 4 de la séquence")
+    title: str
+    created: str
+    updated: str
+    tags: list[str]
+    source_url: str
+    evernote_notebook: str
+    evernote_guid: str
 
 
-def build_frontmatter(metadata: dict) -> str:
-    """
-    Render a metadata dict to a YAML frontmatter block string.
+def extract_metadata(raw_note: RawNote, notebook_name: str) -> NoteMetadata:
+    """Transforme une RawNote en NoteMetadata normalisée pour frontmatter YAML.
 
     Args:
-        metadata (dict): normalized metadata as returned by extract_metadata
+        raw_note: note brute extraite par enex_parser
+        notebook_name: nom du carnet Evernote source (verbatim, accents conservés)
 
     Returns:
-        str: complete YAML frontmatter block including opening and closing "---" lines
-             with a trailing newline. Title is quoted if it contains YAML special chars.
+        NoteMetadata avec tous les champs renseignés ("" si absent du source)
     """
-    raise NotImplementedError("Étape 4 de la séquence")
+    title = raw_note.title if raw_note.title is not None else ""
+    created = _normalize_date(raw_note.created)
+    updated = _normalize_date(raw_note.updated)
+    tags = _normalize_tags(raw_note.tags)
+    source_url = raw_note.source_url if raw_note.source_url is not None else ""
+    evernote_guid = raw_note.guid if raw_note.guid is not None else ""
+
+    return NoteMetadata(
+        title=title,
+        created=created,
+        updated=updated,
+        tags=tags,
+        source_url=source_url,
+        evernote_notebook=notebook_name,
+        evernote_guid=evernote_guid,
+    )
 
 
-def normalize_date(date_str: Optional[str]) -> str:
-    """
-    Parse an Evernote date string to ISO 8601 format.
-
-    Evernote dates are formatted as "YYYYMMDDTHHMMSSz" (e.g. "20240315T092300Z").
-    Output is "YYYY-MM-DDTHH:MM:SS" without timezone (UTC implicit, as in .enex).
+def to_yaml_frontmatter(metadata: NoteMetadata) -> str:
+    """Génère le bloc frontmatter YAML complet (entre --- et ---).
 
     Args:
-        date_str (str|None): raw Evernote date string or None
+        metadata: NoteMetadata à sérialiser
 
     Returns:
-        str: ISO 8601 datetime string, or "" if date_str is None, empty, or unparseable.
+        Chaîne contenant le frontmatter complet, terminée par \\n.
+        Format conforme à SPECS.md Bloc 3 "Frontmatter YAML".
     """
-    raise NotImplementedError("Étape 4 de la séquence")
+    lines = ["---"]
+
+    lines.append(f'title: "{_escape_yaml_string(metadata.title)}"')
+
+    if metadata.created:
+        lines.append(f"created: {metadata.created}")
+    else:
+        lines.append('created: ""')
+
+    if metadata.updated:
+        lines.append(f"updated: {metadata.updated}")
+    else:
+        lines.append('updated: ""')
+
+    if metadata.tags:
+        lines.append("tags:")
+        for tag in metadata.tags:
+            lines.append(f"  - {tag}")
+    else:
+        lines.append("tags: []")
+
+    lines.append(f'source_url: "{_escape_yaml_string(metadata.source_url)}"')
+    lines.append(f'evernote_notebook: "{_escape_yaml_string(metadata.evernote_notebook)}"')
+    lines.append(f'evernote_guid: "{_escape_yaml_string(metadata.evernote_guid)}"')
+
+    lines.append("---")
+    return "\n".join(lines) + "\n"
 
 
-def normalize_tag(tag: str) -> str:
-    """
-    Normalize a single Evernote tag for Obsidian frontmatter.
-
-    Rules: strip whitespace, lowercase, accents removed, spaces → hyphens,
-    non-ASCII characters removed, consecutive hyphens collapsed.
+def _normalize_date(date_str: str | None) -> str:
+    """Parse une date Evernote (YYYYMMDDTHHMMSSz) en ISO 8601 sans timezone.
 
     Args:
-        tag (str): raw Evernote tag string
+        date_str: chaîne brute depuis ENEX, ou None
 
     Returns:
-        str: normalized tag string, or "" if the tag is empty after normalization.
+        "YYYY-MM-DDTHH:MM:SS" ou "" si absent/mal formé.
     """
-    raise NotImplementedError("Étape 4 de la séquence")
+    if not date_str:
+        return ""
+    try:
+        dt = dateutil_parser.parse(date_str)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except (ValueError, OverflowError):
+        return ""
 
 
-def normalize_tags(tags: list) -> list:
-    """
-    Normalize a list of Evernote tags, dropping empty results and duplicates.
+def _normalize_tags(tags: list[str]) -> list[str]:
+    """Normalise une liste de tags via filename_normalizer.normalize_tag.
+
+    Filtre les tags qui deviennent vides après normalisation.
+    Préserve l'ordre d'origine.
 
     Args:
-        tags (list[str]): raw tags from enex_parser
+        tags: liste brute depuis RawNote
 
     Returns:
-        list[str]: normalized non-empty tags, duplicates removed, original order preserved.
+        liste de tags normalisés non vides.
     """
-    raise NotImplementedError("Étape 4 de la séquence")
+    result = []
+    for tag in tags:
+        normalized = fn_normalize_tag(tag)
+        if normalized:
+            result.append(normalized)
+    return result
+
+
+def _escape_yaml_string(value: str) -> str:
+    """Échappe les guillemets doubles dans une chaîne pour inclusion YAML entre "".
+
+    Args:
+        value: chaîne à échapper
+
+    Returns:
+        chaîne avec les guillemets doubles doublés ("" convention YAML).
+    """
+    return value.replace('"', '""')
