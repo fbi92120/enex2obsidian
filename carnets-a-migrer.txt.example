@@ -1,0 +1,13 @@
+# Liste des carnets Evernote à migrer.
+# Un nom de carnet par ligne, tel qu'il apparaît dans Evernote.
+# Lignes commençant par # : commentaires, ignorées.
+# Lignes vides : ignorées.
+
+# Carnets admin — vague 1
+Comptabilité 2024
+Bail appartement
+Factures EDF
+
+# Carnets admin — vague 2 (à migrer plus tard)
+# Impôts 2023
+# Mutuelle

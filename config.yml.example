@@ -1,0 +1,21 @@
+# Dossier contenant les fichiers .enex exportés depuis l'app Evernote
+source_directory: ~/Migration-Evernote/exports-enex
+
+# Vault Obsidian de destination (admin)
+vault_path: ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vault-Admin
+
+# Dossier des logs et rapports CSV (hors vault)
+log_directory: ~/Migration-Evernote/logs
+
+# Fichier listant les carnets à migrer
+notebook_list: ~/Migration-Evernote/carnets-a-migrer.txt
+
+# Plafond de taille d'une pièce jointe (au-delà : log + skip)
+# Valeur par défaut : 200 Mo — suffisant pour PDFs, Word, Excel, images standard
+# À augmenter uniquement si le corpus contient des vidéos ou archives volumineuses
+attachment_size_limit_mb: 200
+
+# Comportement si un fichier .md cible existe déjà
+# false = skip + log (défaut sécuritaire)
+# true  = écrasement (réservé à --force CLI, jamais en config)
+force_overwrite: false

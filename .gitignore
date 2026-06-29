@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+config.yml
+carnets-a-migrer.txt
+output/
+*.enex
+logs/
+.DS_Store
+.pytest_cache/
