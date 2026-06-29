@@ -78,13 +78,15 @@ def sanitize_attachment_name(name: str) -> tuple:
     Remove dangerous characters from an attachment filename.
 
     Accents and spaces are preserved (attachment names are kept verbatim per SPECS.md).
-    Only path-traversal sequences and FS-forbidden chars are removed.
 
     Rules:
-      - '..' sequences removed (path traversal)
-      - '/' and '\\' replaced by '-' (path separators turned readable separator)
+      - ASCII control chars (0x00-0x1F) and DEL (0x7F) removed
+      - '..' blocked only as a complete path segment (entouré de séparateurs ou en bout)
+        so 'report..backup.pdf' is preserved but '../etc/passwd' is sanitized
+      - '/' and '\\' path separators become '-' (from segment join)
       - FS-forbidden chars removed: < > : " | ? *
       - Consecutive hyphens collapsed, leading/trailing stripped
+      - Returns "" if nothing remains (caller decides replacement name)
 
     Args:
         name (str): raw attachment filename (basename only)
@@ -94,9 +96,15 @@ def sanitize_attachment_name(name: str) -> tuple:
             was_modified is True if any character was removed or replaced.
     """
     original = name
-    cleaned = name.replace('..', '')
-    cleaned = cleaned.replace('/', '-').replace('\\', '-')
+    # Strip ASCII control chars and DEL
+    cleaned = re.sub(r'[\x00-\x1f\x7f]', '', name)
+    # Segment-wise path-traversal check: split on separators, drop '..' and '.' segments
+    parts = re.split(r'[/\\]', cleaned)
+    safe_parts = [p for p in parts if p not in ('..', '.')]
+    cleaned = '-'.join(safe_parts)
+    # Remove FS-forbidden chars
     cleaned = re.sub(r'[<>:"|?*]', '', cleaned)
+    # Collapse consecutive hyphens and strip surrounding
     cleaned = re.sub(r'-+', '-', cleaned).strip('-')
     return cleaned, cleaned != original
 
@@ -127,6 +135,10 @@ def slug_for_note(title, guid) -> str:
     """
     Produce a slug for a note filename, with GUID-based fallback for empty titles.
 
+    Per constitution rule 4 (no fabricated metadata): if both title and guid are
+    absent, raises ValueError rather than inventing an identifier. The caller
+    (writer.py) must catch this, log the error, and skip the note.
+
     Args:
         title (str|None): note title from Evernote (may be None or empty)
         guid (str|None): Evernote note GUID
@@ -134,6 +146,9 @@ def slug_for_note(title, guid) -> str:
     Returns:
         str: slug for use as .md basename (without extension).
             Falls back to "note-[first 8 chars of guid]" if title yields no slug.
+
+    Raises:
+        ValueError: if both title and guid are missing or produce no usable identifier.
     """
     if title:
         slug = to_ascii_slug(title)
@@ -141,4 +156,4 @@ def slug_for_note(title, guid) -> str:
             return slug
     if guid:
         return f"note-{guid[:8]}"
-    return "note-unknown"
+    raise ValueError("Cannot generate slug: both title and guid are missing")

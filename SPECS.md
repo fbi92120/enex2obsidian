@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.1
+**Version** : 1.2
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : V1.1 — Stack XML actée (lxml), plafond pièce jointe abaissé à 200 Mo, fixture de test = carnet Evernote réel désigné par l'utilisateur (non versionné dans le repo)
+**Statut** : V1.2 — Alignement spec/code sur la casse du slug ASCII (casse conservée, pas minuscules)
 **Repo** : à créer
 
 ---
@@ -374,7 +374,7 @@ Loggé dans le même fichier CSV avec une colonne supplémentaire `type` (ou un 
 
 | Élément | Règle |
 |---|---|
-| Nom de dossier carnet | Slug ASCII : minuscules, accents enlevés, espaces → tirets, ponctuation enlevée |
+| Nom de dossier carnet | Slug ASCII : casse conservée, accents enlevés, espaces → tirets, ponctuation enlevée |
 | Nom de fichier `.md` | Slug ASCII (même règle que le dossier carnet) |
 | Nom de pièce jointe | Conservé verbatim (accents et espaces autorisés) |
 | Titre dans frontmatter | Conservé verbatim |
@@ -681,6 +681,7 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 
 ---
 
-*Fin des spécifications V1.1*
+*Fin des spécifications V1.2*
 *Amendement V1.1 : stack XML actée (lxml), plafond pièce jointe à 200 Mo, fixture de test = carnet réel via variable d'environnement*
+*Amendement V1.2 : casse conservée pour le slug ASCII (alignement avec les exemples — Facture-EDF-mars-2024, pas facture-edf-mars-2024)*
 *Document à consommer directement par Claude Code après validation humaine.*

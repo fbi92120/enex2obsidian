@@ -180,6 +180,48 @@ def test_ct15b_is_path_under_base():
         assert is_path_under_base(base, parent) is False
 
 
+def test_ct15c_sanitize_control_chars():
+    """CT-15c: sanitize_attachment_name strips ASCII control chars (0x00-0x1F) and DEL (0x7F)."""
+    from src.filename_normalizer import sanitize_attachment_name
+    name, modified = sanitize_attachment_name('file\x00name\x07.pdf')
+    assert modified is True
+    assert '\x00' not in name
+    assert '\x07' not in name
+    assert name == 'filename.pdf'
+
+
+def test_ct15d_sanitize_dotdot_segment_wise():
+    """CT-15d: segment-wise '..' check — internal '..' in a basename is preserved."""
+    from src.filename_normalizer import sanitize_attachment_name
+    # Legitimate filename: '..' is internal, not a segment — must be preserved
+    name, modified = sanitize_attachment_name('report..backup.pdf')
+    assert modified is False
+    assert name == 'report..backup.pdf'
+    # Path traversal: '..' is a complete segment — must be blocked
+    name2, modified2 = sanitize_attachment_name('../etc/passwd')
+    assert modified2 is True
+    assert '..' not in name2
+    # Multi-level traversal
+    name3, modified3 = sanitize_attachment_name('subfolder/../file.pdf')
+    assert modified3 is True
+    assert '..' not in name3
+
+
+def test_ct15e_sanitize_empty_result():
+    """CT-15e: sanitize_attachment_name returns '' (not None) when everything is stripped."""
+    from src.filename_normalizer import sanitize_attachment_name
+    name, modified = sanitize_attachment_name('..')
+    assert name == ''
+    assert modified is True
+
+
+def test_ct17a_slug_for_note_no_title_no_guid():
+    """CT-17a: slug_for_note raises ValueError when both title and guid are missing."""
+    from src.filename_normalizer import slug_for_note
+    with pytest.raises(ValueError, match="Cannot generate slug"):
+        slug_for_note(None, None)
+
+
 def test_ct15_path_traversal_sanitization():
     """CT-15: Attachment named '../etc/passwd' is sanitized to a safe name; logged with 'sanitized'."""
     pytest.skip("Dépend de attachment_handler — étape 6 de la séquence")
