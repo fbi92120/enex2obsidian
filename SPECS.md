@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.4
+**Version** : 1.5
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : V1.4 — Corrections post-audit enex_parser : protection XXE, hash de pièce jointe non inventé, tolérance par note renforcée, distinction balise absente vs vide
+**Statut** : V1.5 — Correction huge_tree=True (bug bloquant détecté en test empirique sur ENEX réel)
 **Repo** : à créer
 
 ---
@@ -79,8 +79,9 @@ Conçu pour un usage personnel ponctuel — migration unique d'un corpus d'envir
 
 ```
 Python 3.12 via .venv/ (venv local, PEP 668-compliant)
-lxml (iterparse, resolve_entities=False, no_network=True, huge_tree=False, recover=True)
-                               # parsing XML ENEX : streaming, sécurisé (XXE désactivé), tolérant
+lxml (iterparse, resolve_entities=False, no_network=True, huge_tree=True, recover=True)
+                               # streaming sécurisé (XXE désactivé) ; huge_tree=True requis
+                               # car les pièces jointes ENEX (base64) génèrent des nodes >10 Mo
 markdownify                    # conversion XHTML → Markdown
 python-slugify                 # génération slug ASCII depuis titres
 python-dateutil                # parsing dates ISO 8601 Evernote
@@ -688,4 +689,5 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 *Amendement V1.2 : casse conservée pour le slug ASCII (alignement avec les exemples — Facture-EDF-mars-2024, pas facture-edf-mars-2024)*
 *Amendement V1.3 : alignement de la spec sur l'approche segmentaire de path traversal.*
 *Amendement V1.4 : corrections post-audit du module enex_parser — protection XXE (resolve_entities=False, no_network=True), hash RawAttachment toujours None, tolérance par note via try/except, distinction balise absente (None) vs vide ("").*
+*Amendement V1.5 : huge_tree=True pour autoriser les pièces jointes Evernote en base64. Détecté en test empirique post-commit (cyber.enex 91 Mo, 0 notes extraites avec huge_tree=False).*
 *Document à consommer directement par Claude Code après validation humaine.*

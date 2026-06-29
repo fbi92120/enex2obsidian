@@ -8,10 +8,13 @@ sous forme de dataclasses. Ne fait pas :
   - décodage base64 (attachment_handler.py, étape 6)
   - écriture disque (writer.py, étape 10)
 
-Configuration du parser (protection XXE et billion-laughs) :
-  - resolve_entities=False : les entités XML externes ne sont pas résolues
+Configuration du parser :
+  - resolve_entities=False : bloque XXE et expansion d'entités récursives (billion-laughs)
   - no_network=True        : aucune requête réseau pour DTD ou entités distantes
-  - huge_tree=False        : protection contre l'expansion exponentielle d'entités
+  - huge_tree=True         : requis par construction du format ENEX — les pièces jointes
+                             (PDFs, images) sont encodées en base64 dans des nodes <data>
+                             pouvant atteindre plusieurs Mo. La protection billion-laughs
+                             est assurée par resolve_entities=False, pas par huge_tree.
   - recover=True           : tolérance aux erreurs XML partielles
 
 Règle balise absente vs balise vide (appliquée verbatim, normalisation en aval) :
@@ -103,7 +106,7 @@ def iter_notes(enex_path: Path) -> Iterator[RawNote]:
             recover=True,
             resolve_entities=False,
             no_network=True,
-            huge_tree=False,
+            huge_tree=True,
         )
     except etree.XMLSyntaxError as exc:
         raise ValueError(f"Fichier ENEX illisible même en mode recover : {exc}") from exc
