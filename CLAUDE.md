@@ -1,9 +1,9 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.4
+**Version** : 1.5
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : Étape 6/14 validée (attachment_handler) — étape 7/14 à démarrer (notebook_selector)
+**Statut** : Étape 6/14 amendée (filtrage MIME) — étape 7/14 à démarrer (notebook_selector)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
@@ -93,6 +93,14 @@ Pour tout module qui consomme ou produit un format externe (ENEX, XHTML Evernote
 Cette règle a été extraite de l'incident enex_parser V1.5 où un bug bloquant (huge_tree=False) ne s'est manifesté que sur un vrai .enex de 91 Mo, après commit. Les fragments XML inline du test CT-01 ne pouvaient pas le détecter.
 
 Modules concernés dans la séquence V1 : enex_parser, metadata_extractor, content_converter, attachment_handler, writer.
+
+**Représentativité du fichier de test empirique**
+
+Le test empirique sur fichier réel (étape 3 de la validation) doit utiliser un échantillon **représentatif du corpus cible**. Un test sur un carnet "knowledge" (bookmarks, captures web) ne valide pas le comportement attendu sur un corpus "admin" (PDFs reçus, scans).
+
+Si le test empirique fait apparaître des comportements inattendus (volumes anormaux, patterns non prévus dans SPECS.md), traiter comme un signal de spec manquante — pas comme un succès du module testé.
+
+Leçon extraite de l'étape 6 (attachment_handler V1) : cyber.enex (knowledge) a passé les tests avec 114 PJ traitées, ce qui aurait été catastrophique en migration admin réelle (ressources web parasites). Amendement SPECS.md V1.6 introduit suite à cette découverte.
 
 ## Carnet de référence pour les tests
 

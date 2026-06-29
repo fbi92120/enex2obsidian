@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.5
+**Version** : 1.6
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : V1.5 — Correction huge_tree=True (bug bloquant détecté en test empirique sur ENEX réel)
+**Statut** : V1.6 — Filtrage des pièces jointes par allowlist MIME (découverte empirique cyber.enex)
 **Repo** : à créer
 
 ---
@@ -14,7 +14,7 @@
 
 1. **Aucun arrêt du batch sur erreur** — toute erreur (parsing XML, décodage base64, écriture disque) est tracée dans un log et le convertisseur continue. Le batch s'arrête uniquement quand toutes les notes de tous les carnets demandés ont été tentées.
 2. **Aucune perte silencieuse** — toute note du `.enex` produit soit un `.md` dans le vault, soit une ligne explicite dans le log d'erreurs avec son `evernote_guid` et la cause. Jamais d'omission tacite.
-3. **Aucune pièce jointe silencieusement ignorée** — toute pièce jointe d'une note traitée est soit copiée dans `attachments/`, soit signalée dans le log avec une mention dans le `.md` correspondant. Jamais d'omission tacite.
+3. **Aucune pièce jointe silencieusement ignorée** — toute pièce jointe d'une note traitée est soit copiée dans `attachments/`, soit signalée dans le log d'erreurs avec une cause explicite (`size_exceeded`, `corrupted_base64`, `mime_excluded`, `traversal_blocked`, `write_error`). Jamais d'omission tacite. Le filtrage par allowlist MIME (cf. Bloc 3 "Filtrage MIME") fait partie des exclusions autorisées tant qu'il est tracé dans le rapport erreurs.
 4. **Aucune métadonnée inventée** — si une date, un tag ou un GUID est absent du `.enex`, le frontmatter porte une valeur vide ou nulle. Jamais une valeur fabriquée.
 5. **Idempotence** — relancer le convertisseur sur le même périmètre doit produire le même résultat (modulo les logs horodatés). Pas d'effet cumulatif.
 6. **Non-destructivité du source** — le convertisseur n'écrit jamais dans le dossier des `.enex`. Il ne les modifie ni les supprime.
@@ -141,6 +141,44 @@ notebook_list: ~/Migration-Evernote/carnets-a-migrer.txt
 # Valeur par défaut : 200 Mo — suffisant pour PDFs, Word, Excel, images standard
 # À augmenter uniquement si le corpus contient des vidéos ou archives volumineuses
 attachment_size_limit_mb: 200
+
+# Allowlist des types MIME à migrer (toute pièce jointe avec un MIME absent
+# de cette liste est ignorée et tracée dans le rapport erreurs avec cause "mime_excluded")
+# Filtrage actif depuis V1.6 — protège contre les ressources annexes de captures web
+# (CSS, fonts, icônes web) qui pollueraient le vault.
+allowed_mime_types:
+  # Documents bureautiques
+  - application/pdf
+  - application/msword
+  - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  - application/vnd.ms-excel
+  - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+  - application/vnd.ms-powerpoint
+  - application/vnd.openxmlformats-officedocument.presentationml.presentation
+  - application/vnd.oasis.opendocument.text
+  - application/vnd.oasis.opendocument.spreadsheet
+  - application/vnd.oasis.opendocument.presentation
+  - application/rtf
+  - text/rtf
+  - text/plain
+  - text/csv
+  # Images
+  - image/jpeg
+  - image/png
+  - image/heic
+  - image/heif
+  - image/tiff
+  # Email
+  - message/rfc822
+  - application/vnd.ms-outlook
+  # Archives
+  - application/zip
+  - application/x-7z-compressed
+  - application/x-rar-compressed
+  # Audio
+  - audio/mpeg
+  - audio/mp4
+  - audio/wav
 
 # Comportement si un fichier .md cible existe déjà
 # false = skip + log (défaut sécuritaire)
@@ -392,6 +430,22 @@ Exemples :
 | `Réunion: bilan Q1/2024` | `Reunion-bilan-Q1-2024` |
 | `Élève — évaluation` | `Eleve-evaluation` |
 
+### Filtrage MIME
+
+Seules les pièces jointes dont le MIME figure dans la `allowed_mime_types` (cf. `config.yml`) sont migrées. Toute autre pièce jointe est :
+
+- Non écrite sur disque
+- Tracée dans le rapport erreurs avec niveau `attachment` et cause `mime_excluded`
+- Aucune mention ajoutée dans le `.md` correspondant (sinon les notes issues de captures web seraient polluées de dizaines de lignes "ressource non migrée")
+
+Cette politique remplace une approche "tout migrer" qui aurait inondé le vault avec les ressources annexes des captures web Evernote (CSS, fonts, icônes du site source, etc.).
+
+Le test du filtrage se fait sur le MIME extrait de la balise `<mime>` du `<resource>` ENEX. Comparaison stricte (sensible à la casse, sans normalisation). Un MIME absent du `<resource>` (cas dégénéré) est traité comme `mime_excluded`.
+
+La allowlist par défaut couvre les usages admin standard : documents bureautiques (PDF, Office, OpenDocument, RTF, texte, CSV), images sans formats web (JPEG, PNG, HEIC, TIFF — **pas** SVG, WebP, GIF), email exporté, archives, audio. Les MIME explicitement exclus par décision V1.6 : `image/svg+xml`, `image/webp`, `image/gif`, tout MIME non listé.
+
+L'utilisateur peut amender la liste dans son `config.yml` selon les besoins de son corpus, sans modifier le code.
+
 ### Sanitization sécurité
 
 Avant toute écriture de fichier :
@@ -417,6 +471,7 @@ Avant toute écriture de fichier :
 | Note sans tags | `tags: []` dans le frontmatter. |
 | Pièce jointe sans nom (`<file-name>` absent) | Nom généré : `attachment-[hash-8-premiers-caractères].[extension-inférée-depuis-mime]`. Si mime inconnu : extension `.bin`. |
 | Pièce jointe > `attachment_size_limit_mb` (200 Mo par défaut) | Log erreur (carnet, note, fichier, taille). Pièce jointe NON copiée. Le `.md` contient à l'emplacement : `[pièce jointe ignorée : taille > N Mo, voir log]`. |
+| Pièce jointe avec MIME hors allowlist (`text/css`, `font/*`, `image/svg+xml`, `image/webp`, `image/gif`, etc.) | Log erreur niveau attachment, cause `mime_excluded`. Pièce jointe NON copiée. Aucune mention dans le `.md`. |
 | Pièce jointe avec base64 corrompu | Log erreur. Pièce jointe NON copiée. Mention dans le `.md` : `[pièce jointe corrompue, voir log]`. |
 | Pièce jointe avec nom dangereux (`../`, chemins absolus) | Sanitization automatique → suffixe + log dans collisions.csv avec mention `sanitized`. La pièce jointe est copiée sous son nom sanitisé. |
 | Collision de pièce jointe dans un carnet | Suffixe `-2`, `-3`, ... + log CSV. Pas d'écrasement. |
@@ -529,6 +584,7 @@ Les tests de contrat (CT-XX) restent indépendants de cette fixture et s'exécut
 | CT-14 | Collision de `.md` (2 notes "Facture") | "Facture.md" puis "Facture-2.md" |
 | CT-15 | Pièce jointe avec nom "../etc/passwd" | Sanitisé en "etc-passwd" ou similaire, log dans collisions.csv avec note "sanitized" |
 | CT-16 | Pièce jointe > plafond taille | Non copiée, log erreur, mention dans le `.md` |
+| CT-16b | Pièce jointe avec MIME hors allowlist (image/svg+xml) | Non copiée, log erreur cause `mime_excluded`, aucune mention dans le `.md` |
 | CT-17 | Note sans titre | Slug `note-[8-chars-guid].md`, frontmatter `title: ""` |
 | CT-18 | Tag vide après normalisation | Tag ignoré, pas d'entrée vide dans `tags:` |
 
@@ -690,4 +746,5 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 *Amendement V1.3 : alignement de la spec sur l'approche segmentaire de path traversal.*
 *Amendement V1.4 : corrections post-audit du module enex_parser — protection XXE (resolve_entities=False, no_network=True), hash RawAttachment toujours None, tolérance par note via try/except, distinction balise absente (None) vs vide ("").*
 *Amendement V1.5 : huge_tree=True pour autoriser les pièces jointes Evernote en base64. Détecté en test empirique post-commit (cyber.enex 91 Mo, 0 notes extraites avec huge_tree=False).*
+*Amendement V1.6 : filtrage des pièces jointes par allowlist MIME. Découvert sur cyber.enex (114 PJ dont 86% ressources annexes de captures web). Allowlist par défaut couvre les documents bureautiques, images sans formats web (JPEG/PNG/HEIC/TIFF, **pas** SVG/WebP/GIF), email, archives, audio. Configurable dans `config.yml`.*
 *Document à consommer directement par Claude Code après validation humaine.*
