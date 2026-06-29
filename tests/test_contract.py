@@ -550,6 +550,144 @@ def test_ct15_path_traversal_sanitization(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# CT-06x — AttachmentHandler edge cases (Codex preview tests)
+# ---------------------------------------------------------------------------
+
+def test_attachment_handler_idempotence_same_hash(tmp_path):
+    """Deux RawAttachment avec le même contenu (même hash) ne produisent qu'un fichier."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    data = base64.b64encode(b"same content").decode()
+    raw1 = RawAttachment(hash=None, mime="image/png", file_name="img.png", data_base64=data)
+    raw2 = RawAttachment(hash=None, mime="image/png", file_name="other.png", data_base64=data)
+    handler = AttachmentHandler(target_dir=tmp_path / "att", size_limit_mb=200)
+
+    result1 = handler.handle(raw1, note_title="n1", note_guid="g1")
+    result2 = handler.handle(raw2, note_title="n2", note_guid="g2")
+
+    assert result1.status == "ok"
+    assert result2.status == "skipped_existing"
+    assert result2.final_filename == result1.final_filename
+    written = list((tmp_path / "att").glob("*"))
+    assert len([f for f in written if f.is_file()]) == 1
+
+
+def test_attachment_handler_size_limit(tmp_path):
+    """Pièce jointe > size_limit_mb retourne status='skipped_size' sans écrire."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    large_bytes = b"x" * (2 * 1024 * 1024)  # 2 MB
+    raw = RawAttachment(
+        hash=None, mime="application/pdf", file_name="big.pdf",
+        data_base64=base64.b64encode(large_bytes).decode(),
+    )
+    handler = AttachmentHandler(target_dir=tmp_path / "att", size_limit_mb=1)
+    result = handler.handle(raw, note_title="n", note_guid="g")
+
+    assert result.status == "skipped_size"
+    assert result.final_filename is None
+    assert not any((tmp_path / "att").glob("*")) if (tmp_path / "att").exists() else True
+
+
+def test_attachment_handler_corrupted_base64(tmp_path):
+    """Base64 invalide retourne status='corrupted_base64' sans crasher."""
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    raw = RawAttachment(
+        hash=None, mime="application/pdf", file_name="doc.pdf",
+        data_base64="not valid base64 !@#$%",
+    )
+    handler = AttachmentHandler(target_dir=tmp_path / "att", size_limit_mb=200)
+    result = handler.handle(raw, note_title="n", note_guid="g")
+
+    assert result.status == "corrupted_base64"
+    assert result.hash == ""
+    assert result.final_filename is None
+
+
+def test_attachment_handler_missing_filename(tmp_path):
+    """RawAttachment sans file_name produit attachment-{hash[:8]}.{ext}."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    raw = RawAttachment(
+        hash=None, mime="application/pdf", file_name=None,
+        data_base64=base64.b64encode(b"pdf content").decode(),
+    )
+    handler = AttachmentHandler(target_dir=tmp_path / "att", size_limit_mb=200)
+    result = handler.handle(raw, note_title="n", note_guid="g")
+
+    assert result.status == "ok"
+    assert result.final_filename is not None
+    assert result.final_filename.startswith("attachment-")
+    assert len(result.final_filename.split("-")[1].split(".")[0]) == 8
+
+
+def test_attachment_handler_path_traversal_blocked(tmp_path):
+    """RawAttachment avec file_name='../../etc/passwd' est sanitisé ou bloqué."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    target_dir = tmp_path / "att"
+    raw = RawAttachment(
+        hash=None, mime="application/pdf", file_name="../../etc/passwd",
+        data_base64=base64.b64encode(b"content").decode(),
+    )
+    handler = AttachmentHandler(target_dir=target_dir, size_limit_mb=200)
+    result = handler.handle(raw, note_title="n", note_guid="g")
+
+    if result.status == "ok":
+        final = (target_dir / result.final_filename).resolve()
+        assert str(final).startswith(str(target_dir.resolve()))
+    else:
+        assert result.status == "traversal_blocked"
+
+
+def test_attachment_handler_creates_target_dir(tmp_path):
+    """target_dir est créé automatiquement s'il n'existe pas."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    target_dir = tmp_path / "deep" / "nested" / "attachments"
+    assert not target_dir.exists()
+
+    raw = RawAttachment(
+        hash=None, mime="image/png", file_name="photo.png",
+        data_base64=base64.b64encode(b"png data").decode(),
+    )
+    handler = AttachmentHandler(target_dir=target_dir, size_limit_mb=200)
+    result = handler.handle(raw, note_title="n", note_guid="g")
+
+    assert result.status == "ok"
+    assert target_dir.exists()
+
+
+def test_attachment_handler_preserves_accents_in_filename(tmp_path):
+    """Les accents et espaces du nom d'origine sont conservés (SPECS.md)."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    raw = RawAttachment(
+        hash=None, mime="application/pdf", file_name="Facture EDF mars 2024.pdf",
+        data_base64=base64.b64encode(b"pdf").decode(),
+    )
+    handler = AttachmentHandler(target_dir=tmp_path / "att", size_limit_mb=200)
+    result = handler.handle(raw, note_title="n", note_guid="g")
+
+    assert result.status == "ok"
+    assert result.final_filename == "Facture EDF mars 2024.pdf"
+
+
+# ---------------------------------------------------------------------------
 # CT-16 — Attachment size limit enforcement
 # ---------------------------------------------------------------------------
 
