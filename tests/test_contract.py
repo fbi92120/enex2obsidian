@@ -325,17 +325,36 @@ def test_ct07_frontmatter_missing_updated():
 
 def test_ct08_xhtml_basic_conversion():
     """CT-08: <p>, <ul>, <li>, <strong> tags are correctly converted to Markdown equivalents."""
-    pytest.skip("Étape 5 de la séquence")
+    from src.content_converter import convert_content
+
+    xhtml = (
+        "<en-note>"
+        "<p>Un <strong>texte en gras</strong>.</p>"
+        "<ul><li>Item 1</li><li>Item 2</li></ul>"
+        "</en-note>"
+    )
+    result = convert_content(xhtml)
+    assert "**texte en gras**" in result
+    assert "- Item 1" in result
+    assert "- Item 2" in result
 
 
 def test_ct09_en_todo_unchecked():
     """CT-09: <en-todo checked='false'/> converts to '- [ ]'."""
-    pytest.skip("Étape 5 de la séquence")
+    from src.content_converter import convert_content
+
+    xhtml = '<en-note><div><en-todo checked="false"/> Tâche</div></en-note>'
+    result = convert_content(xhtml)
+    assert "- [ ]" in result
 
 
 def test_ct10_en_todo_checked():
     """CT-10: <en-todo checked='true'/> converts to '- [x]'."""
-    pytest.skip("Étape 5 de la séquence")
+    from src.content_converter import convert_content
+
+    xhtml = '<en-note><div><en-todo checked="true"/> Tâche faite</div></en-note>'
+    result = convert_content(xhtml)
+    assert "- [x]" in result
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +377,46 @@ def test_ct12_pdf_link():
     xhtml = '<en-note><en-media hash="def456" type="application/pdf"/></en-note>'
     result = convert_content(xhtml)
     assert "{{ATTACHMENT:def456}}" in result
+
+
+# ---------------------------------------------------------------------------
+# CT-08x — Edge cases for content_converter (Codex audit corrections)
+# ---------------------------------------------------------------------------
+
+def test_convert_content_none():
+    """convert_content(None) returns "" without exception."""
+    from src.content_converter import convert_content
+    assert convert_content(None) == ""
+
+
+def test_convert_content_empty():
+    """convert_content("") returns "" without exception."""
+    from src.content_converter import convert_content
+    assert convert_content("") == ""
+
+
+def test_en_media_without_hash():
+    """<en-media> without hash attribute does not raise an exception."""
+    from src.content_converter import convert_content
+    result = convert_content('<en-note><en-media type="image/png"/></en-note>')
+    assert isinstance(result, str)
+
+
+def test_en_crypt():
+    """<en-crypt> content is replaced by a readable placeholder."""
+    from src.content_converter import convert_content
+    result = convert_content('<en-note><en-crypt>secret</en-crypt></en-note>')
+    assert "chiffré" in result
+
+
+def test_en_todo_inline():
+    """<en-todo> inline dans un <p> produit '[ ]' sans lever d'exception."""
+    from src.content_converter import convert_content
+    result = convert_content(
+        '<en-note><p>Rappel : <en-todo checked="false"/>Payer la facture</p></en-note>'
+    )
+    assert "[ ]" in result
+    assert isinstance(result, str)
 
 
 # ---------------------------------------------------------------------------
