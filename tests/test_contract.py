@@ -53,9 +53,64 @@ REFERENCE_ENEX_XML = """\
 # CT-01 — Parsing: 3 notes extracted with complete metadata
 # ---------------------------------------------------------------------------
 
-def test_ct01_parse_reference_enex():
-    """CT-01: Parsing REFERENCE_ENEX_XML produces 3 notes with complete metadata fields."""
-    pytest.skip("Étape 3 de la séquence")
+CT01_ENEX_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export4.dtd">
+<en-export export-date="20240329T120000Z" application="Evernote" version="10.0">
+<note>
+<title>Facture EDF mars 2024</title>
+<content><![CDATA[<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd">
+<en-note><div>Facture reçue le 15 mars.</div></en-note>]]></content>
+<created>20240315T092300Z</created>
+<updated>20240315T092500Z</updated>
+<tag>factures</tag>
+<tag>EDF</tag>
+<note-attributes><source-url></source-url></note-attributes>
+</note>
+<note>
+<title>Réunion bilan Q1</title>
+<content><![CDATA[<en-note><div>Notes de réunion.</div></en-note>]]></content>
+<created>20240401T140000Z</created>
+<updated>20240401T141500Z</updated>
+<tag>réunions</tag>
+</note>
+</en-export>
+"""
+
+
+def test_ct01_parse_reference_enex(tmp_path):
+    """CT-01: iter_notes() yields 2 RawNote with correct fields from an inline ENEX fixture."""
+    from src.enex_parser import iter_notes, RawNote
+    from collections.abc import Iterator
+
+    enex_file = tmp_path / "test.enex"
+    enex_file.write_text(CT01_ENEX_XML, encoding="utf-8")
+
+    result = iter_notes(enex_file)
+    assert isinstance(result, Iterator)
+
+    notes = list(result)
+    assert len(notes) == 2
+
+    # Note 1
+    n1 = notes[0]
+    assert isinstance(n1, RawNote)
+    assert n1.title == "Facture EDF mars 2024"
+    assert n1.created == "20240315T092300Z"
+    assert n1.updated == "20240315T092500Z"
+    assert n1.tags == ["factures", "EDF"]
+    assert n1.content_xhtml is not None
+    assert "Facture reçue le 15 mars." in n1.content_xhtml
+    assert n1.parse_errors == []
+
+    # Note 2
+    n2 = notes[1]
+    assert n2.title == "Réunion bilan Q1"
+    assert n2.created == "20240401T140000Z"
+    assert n2.updated == "20240401T141500Z"
+    assert n2.tags == ["réunions"]
+    assert n2.parse_errors == []
 
 
 # ---------------------------------------------------------------------------
