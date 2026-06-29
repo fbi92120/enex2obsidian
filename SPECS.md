@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.2
+**Version** : 1.3
 **Date** : 2026-06-29
 **Auteur** : François Biller
-**Statut** : V1.2 — Alignement spec/code sur la casse du slug ASCII (casse conservée, pas minuscules)
+**Statut** : V1.3 — Alignement de la spec sur l'approche segmentaire pour la détection de path traversal
 **Repo** : à créer
 
 ---
@@ -395,7 +395,7 @@ Exemples :
 Avant toute écriture de fichier :
 
 - Suppression des caractères interdits par macOS / Linux / Windows : `< > : " / \ | ? *`
-- Suppression des séquences de path traversal : `..`, `/`, `\`
+- Suppression des séquences de path traversal sur base segmentaire : un nom de fichier est rejeté si l'un de ses segments (split sur `/` ou `\`) est exactement `..` ou `.`. Les `..` internes à un segment (exemple : `report..backup.pdf`) sont conservés comme parties légitimes du nom.
 - Vérification que le chemin résolu (`os.path.realpath`) est strictement sous `vault_path`
 - Si la vérification échoue : abandon de l'écriture, log d'erreur
 
@@ -681,7 +681,8 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 
 ---
 
-*Fin des spécifications V1.2*
+*Fin des spécifications V1.3*
 *Amendement V1.1 : stack XML actée (lxml), plafond pièce jointe à 200 Mo, fixture de test = carnet réel via variable d'environnement*
 *Amendement V1.2 : casse conservée pour le slug ASCII (alignement avec les exemples — Facture-EDF-mars-2024, pas facture-edf-mars-2024)*
+*Amendement V1.3 : alignement de la spec sur l'approche segmentaire de path traversal.*
 *Document à consommer directement par Claude Code après validation humaine.*
