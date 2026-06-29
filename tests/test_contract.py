@@ -423,9 +423,33 @@ def test_en_todo_inline():
 # CT-13 & CT-14 — Collision handling
 # ---------------------------------------------------------------------------
 
-def test_ct13_attachment_collision():
+def test_ct13_attachment_collision(tmp_path):
     """CT-13: Two attachments named 'scan.pdf' result in 'scan.pdf' then 'scan-2.pdf'."""
-    pytest.skip("Étape 6 de la séquence")
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    target_dir = tmp_path / "attachments"
+    handler = AttachmentHandler(target_dir=target_dir, size_limit_mb=200)
+
+    raw1 = RawAttachment(
+        hash=None, mime="application/pdf", file_name="scan.pdf",
+        data_base64=base64.b64encode(b"content_first").decode(),
+    )
+    raw2 = RawAttachment(
+        hash=None, mime="application/pdf", file_name="scan.pdf",
+        data_base64=base64.b64encode(b"content_second").decode(),
+    )
+
+    result1 = handler.handle(raw1, note_title="Note 1", note_guid="guid-1")
+    result2 = handler.handle(raw2, note_title="Note 2", note_guid="guid-2")
+
+    assert result1.status == "ok"
+    assert result1.final_filename == "scan.pdf"
+    assert result2.status == "ok"
+    assert result2.final_filename == "scan-2.pdf"
+    assert (target_dir / "scan.pdf").exists()
+    assert (target_dir / "scan-2.pdf").exists()
 
 
 def test_ct14_md_collision():
@@ -504,9 +528,25 @@ def test_ct17a_slug_for_note_no_title_no_guid():
         slug_for_note(None, None)
 
 
-def test_ct15_path_traversal_sanitization():
-    """CT-15: Attachment named '../etc/passwd' is sanitized to a safe name; logged with 'sanitized'."""
-    pytest.skip("Dépend de attachment_handler — étape 6 de la séquence")
+def test_ct15_path_traversal_sanitization(tmp_path):
+    """CT-15: Attachment with '../etc/passwd' filename is sanitized or blocked — never written outside target_dir."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    target_dir = tmp_path / "attachments"
+    raw = RawAttachment(
+        hash=None, mime="application/pdf", file_name="../etc/passwd",
+        data_base64=base64.b64encode(b"safe content").decode(),
+    )
+    handler = AttachmentHandler(target_dir=target_dir, size_limit_mb=200)
+    result = handler.handle(raw, note_title="t", note_guid="g")
+
+    if result.status == "ok":
+        final = (target_dir / result.final_filename).resolve()
+        assert str(final).startswith(str(target_dir.resolve()))
+    else:
+        assert result.status in ("traversal_blocked", "ok")
 
 
 # ---------------------------------------------------------------------------
