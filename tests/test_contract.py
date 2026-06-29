@@ -63,13 +63,15 @@ def test_ct01_parse_reference_enex():
 # ---------------------------------------------------------------------------
 
 def test_ct02_slug_comptabilite():
-    """CT-02: to_slug('Comptabilité 2024') returns 'Comptabilite-2024'."""
-    pytest.skip("Étape 2 de la séquence")
+    """CT-02: to_ascii_slug('Comptabilité 2024') returns 'Comptabilite-2024'."""
+    from src.filename_normalizer import to_ascii_slug
+    assert to_ascii_slug('Comptabilité 2024') == 'Comptabilite-2024'
 
 
 def test_ct03_slug_reunion():
-    """CT-03: to_slug('Réunion: bilan Q1/2024') returns 'Reunion-bilan-Q1-2024'."""
-    pytest.skip("Étape 2 de la séquence")
+    """CT-03: to_ascii_slug('Réunion: bilan Q1/2024') returns 'Reunion-bilan-Q1-2024'."""
+    from src.filename_normalizer import to_ascii_slug
+    assert to_ascii_slug('Réunion: bilan Q1/2024') == 'Reunion-bilan-Q1-2024'
 
 
 # ---------------------------------------------------------------------------
@@ -78,12 +80,14 @@ def test_ct03_slug_reunion():
 
 def test_ct04_tag_facture_edf():
     """CT-04: normalize_tag('Facture EDF') returns 'facture-edf'."""
-    pytest.skip("Étape 4 de la séquence")
+    from src.filename_normalizer import normalize_tag
+    assert normalize_tag('Facture EDF') == 'facture-edf'
 
 
 def test_ct05_tag_eleve_evaluation():
     """CT-05: normalize_tag('Élève évaluation') returns 'eleve-evaluation'."""
-    pytest.skip("Étape 4 de la séquence")
+    from src.filename_normalizer import normalize_tag
+    assert normalize_tag('Élève évaluation') == 'eleve-evaluation'
 
 
 # ---------------------------------------------------------------------------
@@ -148,12 +152,37 @@ def test_ct14_md_collision():
 
 
 # ---------------------------------------------------------------------------
-# CT-15 — Path traversal sanitization
+# CT-15a — sanitize_attachment_name (filename_normalizer unit)
+# CT-15b — is_path_under_base (filename_normalizer unit)
+# CT-15  — full path-traversal end-to-end (skipped: depends on attachment_handler)
 # ---------------------------------------------------------------------------
+
+def test_ct15a_sanitize_attachment_path_traversal():
+    """CT-15a: sanitize_attachment_name removes '..' and path separators; signals modification."""
+    from src.filename_normalizer import sanitize_attachment_name
+    name, modified = sanitize_attachment_name('../etc/passwd')
+    assert modified is True
+    assert '..' not in name
+    assert '/' not in name
+    assert '\\' not in name
+
+
+def test_ct15b_is_path_under_base():
+    """CT-15b: is_path_under_base rejects equal and outer paths; accepts strict children."""
+    import os
+    import tempfile
+    from src.filename_normalizer import is_path_under_base
+    with tempfile.TemporaryDirectory() as base:
+        assert is_path_under_base(base, base) is False
+        child = os.path.join(base, 'notebook', 'note.md')
+        assert is_path_under_base(base, child) is True
+        parent = os.path.dirname(base)
+        assert is_path_under_base(base, parent) is False
+
 
 def test_ct15_path_traversal_sanitization():
     """CT-15: Attachment named '../etc/passwd' is sanitized to a safe name; logged with 'sanitized'."""
-    pytest.skip("Étape 2 de la séquence")
+    pytest.skip("Dépend de attachment_handler — étape 6 de la séquence")
 
 
 # ---------------------------------------------------------------------------
