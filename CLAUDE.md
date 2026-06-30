@@ -3,7 +3,7 @@
 **Version** : 1.6
 **Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : Étape 7/14 validée, vérification documentaire ENEX intégrée (SPECS V1.7) — étape 8/14 à démarrer (reporter)
+**Statut** : Étape 8/14 validée (reporter) — étape 9/14 à démarrer (tests/test_contract.py — activation tests writer)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
