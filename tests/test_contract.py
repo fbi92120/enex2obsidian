@@ -1312,7 +1312,7 @@ def test_writer_resolves_image_placeholder(tmp_path):
     )
     assert result.status == "ok"
     content = result.final_path.read_text(encoding="utf-8")
-    assert "![[photo.jpg]]" in content
+    assert "![[attachments/photo.jpg]]" in content  # V1.8: chemin attachments/ explicite
     assert "{{ATTACHMENT:" not in content
 
 
@@ -1335,7 +1335,7 @@ def test_writer_resolves_pdf_placeholder(tmp_path):
     )
     assert result.status == "ok"
     content = result.final_path.read_text(encoding="utf-8")
-    assert "[Facture EDF.pdf](attachments/Facture%20EDF.pdf)" in content
+    assert "![[attachments/Facture EDF.pdf]]" in content  # V1.8: embed wikilink pour PDFs
 
 
 def test_writer_unresolved_placeholder(tmp_path):
@@ -1640,3 +1640,205 @@ def test_writer_tmp_cleanup_existing(tmp_path):
     assert not orphan_tmp.exists()
     content = result.final_path.read_text(encoding="utf-8")
     assert "Nouveau contenu" in content
+
+
+# ---------------------------------------------------------------------------
+# CT-19 à CT-22 + tests Codex — NFC + format embed (SPECS V1.8)
+# ---------------------------------------------------------------------------
+
+def test_ct19_nfd_input_normalized_to_nfc():
+    """CT-19: sanitize_attachment_name normalise NFD en NFC."""
+    import unicodedata
+    from src.filename_normalizer import sanitize_attachment_name
+
+    nfd_name = "nucléaire.pdf"   # e + combining acute accent (NFD)
+    nfc_name = "nucléaire.pdf"    # é composé (NFC)
+
+    result, was_modified = sanitize_attachment_name(nfd_name)
+
+    assert result == nfc_name
+    assert unicodedata.is_normalized("NFC", result)
+    assert was_modified is True  # changement NFD → NFC détecté
+
+
+def test_ct20_pdf_accentuated_link_uses_nfc(tmp_path):
+    """CT-20: lien pour PDF accentué utilise NFC dans l'embed wikilink (pas NFD %CC%81)."""
+    import unicodedata
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    nfd_filename = "nucléaire.pdf"   # NFD : e + accent combinant
+    nfc_filename = "nucléaire.pdf"    # NFC : é composé
+
+    attachment_map = {
+        "abc123def456": AttachmentResult(
+            hash="abc123def456",
+            status="ok",
+            final_filename=nfd_filename,    # reçu en NFD (cas pathologique)
+            mime="application/pdf",
+            original_filename=nfd_filename,
+            size_bytes=1000,
+            error_detail=None,
+            note_title="Test",
+            note_guid="abc-123",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Test PDF accent", guid="abc-123"),
+        markdown_content="Voici : {{ATTACHMENT:abc123def456}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+
+    # Embed wikilink avec NFC
+    assert f"![[attachments/{nfc_filename}]]" in content
+    # Pas d'encoding NFD (%CC%81 = combining acute accent)
+    assert "%CC%81" not in content
+    # Pas de lien Markdown classique (les PDFs sont des embeds en V1.8)
+    assert f"[{nfd_filename}]" not in content
+    assert f"[{nfc_filename}](" not in content
+
+
+def test_ct21_pdf_uses_embed_wikilink(tmp_path):
+    """CT-21: PDF utilise le format ![[attachments/file.pdf]], pas lien Markdown."""
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    attachment_map = {
+        "abc123def456": AttachmentResult(
+            hash="abc123def456",
+            status="ok",
+            final_filename="Facture.pdf",
+            mime="application/pdf",
+            original_filename="Facture.pdf",
+            size_bytes=1000,
+            error_detail=None,
+            note_title="Test",
+            note_guid="abc-123",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Test PDF", guid="abc-123"),
+        markdown_content="{{ATTACHMENT:abc123def456}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "![[attachments/Facture.pdf]]" in content
+    assert "[Facture.pdf](" not in content  # pas de lien Markdown classique
+
+
+def test_ct22_docx_uses_markdown_link(tmp_path):
+    """CT-22: docx utilise le lien Markdown classique, pas d'embed."""
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    attachment_map = {
+        "abc123def456": AttachmentResult(
+            hash="abc123def456",
+            status="ok",
+            final_filename="Rapport.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            original_filename="Rapport.docx",
+            size_bytes=1000,
+            error_detail=None,
+            note_title="Test",
+            note_guid="abc-123",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Test DOCX", guid="abc-123"),
+        markdown_content="{{ATTACHMENT:abc123def456}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "[Rapport.docx](attachments/Rapport.docx)" in content
+    assert "![[attachments/Rapport.docx]]" not in content
+
+
+def test_image_uses_embed_wikilink_with_attachments_path(tmp_path):
+    """Images utilisent ![[attachments/...]] avec chemin relatif explicite (V1.8)."""
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    attachment_map = {
+        "abc123def456": AttachmentResult(
+            hash="abc123def456",
+            status="ok",
+            final_filename="photo.jpg",
+            mime="image/jpeg",
+            original_filename="photo.jpg",
+            size_bytes=1000,
+            error_detail=None,
+            note_title="Test",
+            note_guid="abc-123",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Test image", guid="abc-123"),
+        markdown_content="{{ATTACHMENT:abc123def456}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "![[attachments/photo.jpg]]" in content
+    # Pas de wikilink sans chemin (ancien format V1.7)
+    assert "![[photo.jpg]]" not in content
+
+
+def test_nfc_collision_after_normalization(tmp_path):
+    """Deux pièces jointes en NFD et NFC du même nom détectent une collision."""
+    import base64
+    import unicodedata
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    handler = AttachmentHandler(target_dir=tmp_path / "att")
+
+    # Premier : nom en NFC (é composé)
+    nfc_attachment = RawAttachment(
+        data_base64=base64.b64encode(b"contenu1").decode(),
+        mime="application/pdf",
+        file_name="nucléaire.pdf",   # é composé NFC
+        hash=None,
+    )
+    r1 = handler.handle(nfc_attachment, note_title="t", note_guid="g1")
+
+    # Deuxième : même mot en NFD (e + accent combinant)
+    nfd_attachment = RawAttachment(
+        data_base64=base64.b64encode(b"contenu2").decode(),
+        mime="application/pdf",
+        file_name="nucléaire.pdf",  # NFD
+        hash=None,
+    )
+    r2 = handler.handle(nfd_attachment, note_title="t", note_guid="g2")
+
+    nfc_name = "nucléaire.pdf"
+
+    assert r1.status == "ok"
+    assert r1.final_filename == nfc_name
+    assert r2.status == "ok"
+    # Après normalisation NFC, les deux noms convergent → collision détectée
+    assert r2.final_filename == "nucléaire-2.pdf"
+    # Les deux noms sont en NFC
+    assert unicodedata.is_normalized("NFC", r1.final_filename)
+    assert unicodedata.is_normalized("NFC", r2.final_filename)
+
+
+def test_md_slug_normalized_to_nfc(tmp_path):
+    """Le slug du .md produit par writer est en NFC."""
+    import unicodedata
+    from src.writer import Writer
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    result = writer.write(_minimal_metadata(title="Réflexions", guid="abc-123"), "Contenu", {})
+
+    assert result.status == "ok"
+    filename = result.final_path.name
+    assert unicodedata.is_normalized("NFC", filename)

@@ -22,6 +22,7 @@ import base64
 import binascii
 import hashlib
 import mimetypes
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -262,13 +263,17 @@ class AttachmentHandler:
         Priorité :
           1. original_filename sanitisé (accents et espaces conservés per SPECS.md)
           2. attachment-{hash[:8]}.{ext} si nom absent ou vide après sanitization
+
+        Le résultat est garanti en Unicode NFC (constitution règle 10, V1.8).
+        La défense en profondeur s'ajoute à la normalisation de sanitize_attachment_name.
         """
         if original_filename:
             sanitized, _ = sanitize_attachment_name(original_filename)
             if sanitized:
-                return sanitized
+                return unicodedata.normalize("NFC", sanitized)
         ext = self._guess_extension(mime)
-        return f"attachment-{md5_hash[:8]}{ext}"
+        fallback = f"attachment-{md5_hash[:8]}{ext}"
+        return unicodedata.normalize("NFC", fallback)
 
     def _guess_extension(self, mime: str) -> str:
         """Devine l'extension depuis le MIME type via mimetypes stdlib.

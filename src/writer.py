@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,13 @@ from src.attachment_handler import AttachmentResult
 
 # Strict MD5 hex format — non-hex characters are not treated as placeholders
 _PLACEHOLDER_RE = re.compile(r'\{\{ATTACHMENT:([a-f0-9]+)\}\}')
+
+# Types MIME rendus en embed wikilink ![[attachments/...]] (images + PDFs, V1.8)
+_EMBED_MIMES = {
+    "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
+    "image/heic", "image/heif", "image/tiff", "image/svg+xml",
+    "application/pdf",
+}
 
 WriteStatus = Literal[
     "ok",
@@ -98,6 +106,7 @@ class Writer:
         # Étape 1 — Génération du slug (constitution règle 4 : pas de fallback inventé)
         try:
             slug = slug_for_note(metadata.title, metadata.evernote_guid)
+            slug = unicodedata.normalize("NFC", slug)  # défense en profondeur (V1.8)
         except ValueError as exc:
             return WriteResult(
                 status="write_error",
@@ -261,6 +270,14 @@ def _resolve_placeholders(
 ) -> tuple[str, list[str]]:
     """Résout les placeholders {{ATTACHMENT:hash}} dans le contenu Markdown.
 
+    Format de sortie (V1.8) :
+    - Images et PDFs : ![[attachments/fichier.ext]] (embed wikilink, chemin relatif explicite)
+    - Autres types   : [fichier.ext](attachments/fichier-encoded.ext) (lien Markdown classique)
+    - Non disponible : [pièce jointe non disponible : status]
+    - Non résolu     : [pièce jointe non résolue : hash[:8]...]
+
+    Tous les noms de fichiers sont normalisés en NFC (constitution règle 10, V1.8).
+
     Returns:
         (contenu résolu, liste des hashes non trouvés dans attachment_map)
     """
@@ -273,16 +290,14 @@ def _resolve_placeholders(
             unresolved.append(hash_val)
             return f"[pièce jointe non résolue : {hash_val[:8]}...]"
         if att.status == "ok" and att.final_filename:
-            if _is_image_mime(att.mime):
-                return f"![[{att.final_filename}]]"
+            # Défense en profondeur NFC (constitution règle 10, V1.8)
+            filename = unicodedata.normalize("NFC", att.final_filename)
+            if att.mime in _EMBED_MIMES:
+                return f"![[attachments/{filename}]]"
             else:
-                encoded = urllib.parse.quote(att.final_filename, safe="")
-                return f"[{att.final_filename}](attachments/{encoded})"
+                encoded = urllib.parse.quote(filename, safe="")
+                return f"[{filename}](attachments/{encoded})"
         return f"[pièce jointe non disponible : {att.status}]"
 
     resolved = _PLACEHOLDER_RE.sub(_replace, content)
     return resolved, unresolved
-
-
-def _is_image_mime(mime: str) -> bool:
-    return bool(mime) and mime.startswith("image/")

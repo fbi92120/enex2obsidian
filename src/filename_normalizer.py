@@ -106,7 +106,9 @@ def sanitize_attachment_name(name: str) -> tuple:
     cleaned = re.sub(r'[<>:"|?*]', '', cleaned)
     # Collapse consecutive hyphens and strip surrounding
     cleaned = re.sub(r'-+', '-', cleaned).strip('-')
-    return cleaned, cleaned != original
+    # Normalisation NFC obligatoire (constitution règle 10, V1.8)
+    cleaned_nfc = unicodedata.normalize("NFC", cleaned)
+    return cleaned_nfc, cleaned_nfc != original
 
 
 def is_path_under_base(base_path: str, target_path: str) -> bool:
