@@ -140,13 +140,16 @@ def _normalize_tags(tags: list[str]) -> list[str]:
     return result
 
 
-def _escape_yaml_string(value: str) -> str:
-    """Échappe les guillemets doubles dans une chaîne pour inclusion YAML entre "".
+def _escape_yaml_string(s: str) -> str:
+    """Échappe une chaîne pour inclusion dans un YAML quoted-string.
 
-    Args:
-        value: chaîne à échapper
-
-    Returns:
-        chaîne avec les guillemets doubles doublés ("" convention YAML).
+    Échappements appliqués :
+    - Retours ligne et tabulations : remplacés par un espace
+      (garantit la validité du YAML inline, conforme à la pratique d'Obsidian)
+    - Guillemets doubles : " → \\"
     """
-    return value.replace('"', '""')
+    if s is None:
+        return ""
+    s = s.replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    s = s.replace('"', '\\"')
+    return s

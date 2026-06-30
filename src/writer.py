@@ -26,8 +26,8 @@ from src.filename_normalizer import slug_for_note, is_path_under_base
 from src.metadata_extractor import NoteMetadata, to_yaml_frontmatter
 from src.attachment_handler import AttachmentResult
 
-# Regex des placeholders — permissive sur le hash pour couvrir MD5 hex et les tests
-_PLACEHOLDER_RE = re.compile(r'\{\{ATTACHMENT:([^\}]+)\}\}')
+# Strict MD5 hex format — non-hex characters are not treated as placeholders
+_PLACEHOLDER_RE = re.compile(r'\{\{ATTACHMENT:([a-f0-9]+)\}\}')
 
 WriteStatus = Literal[
     "ok",
@@ -55,6 +55,22 @@ class Writer:
     Instanciation : une fois par carnet, avant la boucle sur les notes.
     Maintient l'état des noms de fichiers .md déjà écrits pour gérer les
     collisions de slug à l'échelle du carnet.
+
+    Limitations connues (V1) :
+    - Pas de fsync après l'écriture du .tmp : flush() garantit la sortie du
+      buffer Python, mais l'écriture disque physique peut être différée.
+      Impact uniquement en cas de crash matériel pendant la migration.
+    - Race condition entre check d'existence et write : un autre processus
+      pourrait créer/supprimer le .md cible entre les deux. V1 mono-process,
+      acceptable.
+    - Idempotence intra-session par evernote_guid non implémentée : deux
+      appels write() pour la même note (même GUID) dans la même session
+      produisent un suffixe -2 au lieu d'être détectés comme redondants.
+      L'orchestrateur V1 itère sur des notes uniques, donc ce cas ne se
+      présente pas en pratique.
+    - URL encoding : un nom de fichier contenant déjà %XX sera double-encodé
+      (%2520 au lieu de %20). Cas pathologique improbable sur un corpus
+      Evernote standard.
     """
 
     def __init__(self, notebook_dir: Path, force_overwrite: bool = False) -> None:
@@ -67,7 +83,6 @@ class Writer:
         self._notebook_dir = Path(notebook_dir)
         self._notebook_dir.mkdir(parents=True, exist_ok=True)
         self._force_overwrite = force_overwrite
-        # Noms de fichiers .md finaux déjà écrits dans cette session (intra-session)
         self._written_filenames: set[str] = set()
 
     def write(
@@ -80,18 +95,23 @@ class Writer:
 
         Ne lève jamais d'exception : toute erreur disque est capturée dans WriteResult.
         """
-        # Étape 1 — Génération du slug
+        # Étape 1 — Génération du slug (constitution règle 4 : pas de fallback inventé)
         try:
             slug = slug_for_note(metadata.title, metadata.evernote_guid)
-        except ValueError:
-            slug = "note-unknown"
+        except ValueError as exc:
+            return WriteResult(
+                status="write_error",
+                final_path=None,
+                slug="",
+                collided=False,
+                final_filename=None,
+                error_detail=f"cannot generate slug: {exc}",
+            )
 
-        # Étape 2 — Nom de fichier initial
+        # Étape 2 — Anti-traversal sur le slug initial
         initial_filename = f"{slug}.md"
-
-        # Étape 3 — Anti-traversal
-        candidate_path = (self._notebook_dir / initial_filename).resolve()
-        if not is_path_under_base(str(self._notebook_dir), str(candidate_path)):
+        initial_candidate = (self._notebook_dir / initial_filename).resolve()
+        if not is_path_under_base(str(self._notebook_dir), str(initial_candidate)):
             return WriteResult(
                 status="traversal_blocked",
                 final_path=None,
@@ -101,66 +121,112 @@ class Writer:
                 error_detail=f"Slug '{slug}' resolves outside notebook_dir",
             )
 
-        # Étape 4 — Gestion collision / skip existant
-        # Vérifier si le fichier initial existe sur disque ou en mémoire de session
+        # Étape 3 — Gestion collision / skip
         final_filename = initial_filename
-        final_path = self._notebook_dir / final_filename
         collided = False
+        notebook_dir = self._notebook_dir
 
-        if final_path.exists() or final_filename in self._written_filenames:
-            if not self._force_overwrite:
-                # On cherche si c'est un vrai conflit inter-session (disque seul)
-                # ou intra-session → dans les deux cas sans force : skipped ou collision
-                if not (final_filename in self._written_filenames):
-                    # Fichier existe sur disque, pas encore en session → skip
+        disk_exists = (notebook_dir / final_filename).exists()
+        in_session = final_filename in self._written_filenames
+
+        if disk_exists or in_session:
+            if self._force_overwrite:
+                pass  # écrasement inter- ou intra-session (correction 4)
+            elif not in_session:
+                # Conflit disque uniquement, force=False.
+                # Vérifie si l'espace de suffixes est épuisé (correction 2).
+                all_taken = True
+                for suffix in range(2, 1000):
+                    cand = f"{slug}-{suffix}.md"
+                    if cand not in self._written_filenames and not (notebook_dir / cand).exists():
+                        all_taken = False
+                        break
+                if all_taken:
                     return WriteResult(
-                        status="skipped_existing",
-                        final_path=final_path,
+                        status="write_error",
+                        final_path=None,
                         slug=slug,
                         collided=False,
-                        final_filename=final_filename,
-                        error_detail=None,
+                        final_filename=None,
+                        error_detail=f"collision counter exhausted (>1000 conflicts for slug '{slug}')",
                     )
-                # Déjà dans la session → résoudre la collision avec suffixe
-            if self._force_overwrite and final_filename not in self._written_filenames:
-                # Écraser le fichier disque existant (force mode, pas encore écrit dans cette session)
-                pass
+                # Suffixe libre disponible → note déjà traitée lors d'un run précédent
+                return WriteResult(
+                    status="skipped_existing",
+                    final_path=notebook_dir / final_filename,
+                    slug=slug,
+                    collided=False,
+                    final_filename=final_filename,
+                    error_detail=None,
+                )
             else:
-                # Chercher un nom libre avec suffixe -2, -3, ...
-                for counter in range(2, 10000):
-                    candidate_filename = f"{slug}-{counter}.md"
-                    candidate_path2 = self._notebook_dir / candidate_filename
-                    if not candidate_path2.exists() and candidate_filename not in self._written_filenames:
-                        final_filename = candidate_filename
-                        final_path = candidate_path2
+                # Conflit intra-session : trouver un suffixe libre (correction 2)
+                found = False
+                for suffix in range(2, 1000):
+                    cand = f"{slug}-{suffix}.md"
+                    if cand not in self._written_filenames and not (notebook_dir / cand).exists():
+                        final_filename = cand
                         collided = True
+                        found = True
                         break
+                if not found:
+                    return WriteResult(
+                        status="write_error",
+                        final_path=None,
+                        slug=slug,
+                        collided=False,
+                        final_filename=None,
+                        error_detail=f"collision counter exhausted (>1000 conflicts for slug '{slug}')",
+                    )
 
-        # Vérifier anti-traversal sur le nom final (au cas où le suffixe modifie)
-        if not is_path_under_base(str(self._notebook_dir), str(final_path.resolve())):
-            return WriteResult(
-                status="traversal_blocked",
-                final_path=None,
-                slug=slug,
-                collided=collided,
-                final_filename=None,
-                error_detail=f"Resolved path for '{final_filename}' outside notebook_dir",
-            )
+        final_path = notebook_dir / final_filename
 
-        # Étape 5 — Résolution des placeholders
+        # Étape 4 — Résolution des placeholders
         resolved_content, unresolved = _resolve_placeholders(markdown_content, attachment_map)
 
-        # Étape 6 — Assemblage
+        # Étape 5 — Assemblage
         frontmatter = to_yaml_frontmatter(metadata)
         final_content = frontmatter + "\n" + resolved_content
 
-        # Étape 7 — Écriture atomique
+        # Étape 6 — Écriture atomique avec protection symlink (correction 1)
         tmp_path = final_path.parent / (final_path.name + ".tmp")
+
+        # Cleanup défensif d'un .tmp préexistant (orphelin ou symlink malicieux)
+        if tmp_path.exists() or tmp_path.is_symlink():
+            try:
+                tmp_path.unlink()
+            except Exception as exc:
+                return WriteResult(
+                    status="write_error",
+                    final_path=None,
+                    slug=slug,
+                    collided=collided,
+                    final_filename=None,
+                    error_detail=f"cannot remove existing .tmp: {exc}",
+                )
+
         try:
             with tmp_path.open("w", encoding="utf-8") as f:
                 f.write(final_content)
                 f.flush()
+
+            # Vérification anti-traversal sur le .tmp APRÈS écriture, AVANT os.replace
+            if not is_path_under_base(str(self._notebook_dir), str(tmp_path.resolve())):
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+                return WriteResult(
+                    status="traversal_blocked",
+                    final_path=None,
+                    slug=slug,
+                    collided=collided,
+                    final_filename=None,
+                    error_detail=".tmp path resolves outside notebook_dir",
+                )
+
             os.replace(tmp_path, final_path)
+
         except Exception as exc:
             if tmp_path.exists():
                 try:
@@ -176,7 +242,6 @@ class Writer:
                 error_detail=str(exc)[:400],
             )
 
-        # Mémoriser le nom final pour les collisions intra-session
         self._written_filenames.add(final_filename)
 
         return WriteResult(
@@ -213,7 +278,6 @@ def _resolve_placeholders(
             else:
                 encoded = urllib.parse.quote(att.final_filename, safe="")
                 return f"[{att.final_filename}](attachments/{encoded})"
-        # Pièce jointe skippée (mime_excluded, size_exceeded, etc.)
         return f"[pièce jointe non disponible : {att.status}]"
 
     resolved = _PLACEHOLDER_RE.sub(_replace, content)

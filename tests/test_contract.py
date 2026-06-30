@@ -1344,11 +1344,11 @@ def test_writer_unresolved_placeholder(tmp_path):
     writer = Writer(notebook_dir=tmp_path / "Carnet")
     result = writer.write(
         metadata=_minimal_metadata(title="Note orpheline", guid="abc-123"),
-        markdown_content="Référence orpheline : {{ATTACHMENT:ghost999}}",
+        markdown_content="Référence orpheline : {{ATTACHMENT:aabb1199}}",
         attachment_map={},
     )
     assert result.status == "ok"
-    assert "ghost999" in result.unresolved_placeholders
+    assert "aabb1199" in result.unresolved_placeholders
     content = result.final_path.read_text(encoding="utf-8")
     assert "pièce jointe non résolue" in content
 
@@ -1359,19 +1359,19 @@ def test_writer_skipped_attachment_placeholder(tmp_path):
     from src.attachment_handler import AttachmentResult
     writer = Writer(notebook_dir=tmp_path / "Carnet")
     attachment_map = {
-        "svg123": AttachmentResult(
-            hash="svg123", status="skipped_mime", final_filename=None,
+        "11223344": AttachmentResult(
+            hash="11223344", status="skipped_mime", final_filename=None,
             mime="image/svg+xml", original_filename="logo.svg", size_bytes=500,
             error_detail="MIME hors allowlist", note_title="...", note_guid="...",
         )
     }
     result = writer.write(
         metadata=_minimal_metadata(title="Note avec SVG", guid="abc-123"),
-        markdown_content="Logo : {{ATTACHMENT:svg123}}",
+        markdown_content="Logo : {{ATTACHMENT:11223344}}",
         attachment_map=attachment_map,
     )
     assert result.status == "ok"
-    assert "svg123" not in result.unresolved_placeholders
+    assert "11223344" not in result.unresolved_placeholders
     content = result.final_path.read_text(encoding="utf-8")
     assert "pièce jointe non disponible" in content
     assert "skipped_mime" in content
@@ -1474,3 +1474,169 @@ def test_writer_no_exception_on_disk_error(tmp_path, monkeypatch):
     assert result.status == "write_error"
     assert result.final_path is None
     assert "Simulated" in (result.error_detail or "")
+
+
+# ---------------------------------------------------------------------------
+# Étape 10b — Corrections post-audit Codex
+# ---------------------------------------------------------------------------
+
+def test_writer_tmp_symlink_blocked(tmp_path):
+    """Si Facture.md.tmp est un symlink hors notebook_dir, l'écriture est protégée."""
+    from src.writer import Writer
+    notebook_dir = tmp_path / "Carnet"
+    notebook_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    tmp_link = notebook_dir / "Facture.md.tmp"
+    target_outside = outside / "evil.txt"
+    target_outside.write_text("preexisting", encoding="utf-8")
+    tmp_link.symlink_to(target_outside)
+
+    writer = Writer(notebook_dir=notebook_dir)
+    metadata = _minimal_metadata(title="Facture", guid="abc-123")
+    result = writer.write(metadata, "Contenu", {})
+
+    # Le fichier hors notebook_dir ne doit pas avoir été modifié
+    assert target_outside.read_text(encoding="utf-8") == "preexisting"
+    if result.status == "ok":
+        assert (notebook_dir / "Facture.md").exists()
+    else:
+        assert result.status in ("traversal_blocked", "write_error")
+
+
+def test_writer_collision_counter_exhausted(tmp_path):
+    """Si la boucle de collision épuise les suffixes, retourne write_error."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+
+    notebook = tmp_path / "Carnet"
+    (notebook / "Facture.md").write_text("x", encoding="utf-8")
+    for i in range(2, 1000):
+        (notebook / f"Facture-{i}.md").write_text("x", encoding="utf-8")
+
+    metadata = _minimal_metadata(title="Facture", guid="abc-123")
+    result = writer.write(metadata, "Contenu", {})
+
+    assert result.status == "write_error"
+    assert "collision counter exhausted" in (result.error_detail or "").lower()
+
+
+def test_writer_no_slug_no_guid_returns_error(tmp_path):
+    """Titre vide ET GUID vide → write_error (pas de fallback note-unknown)."""
+    from src.writer import Writer
+    from src.metadata_extractor import NoteMetadata
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = NoteMetadata(
+        title="",
+        created="",
+        updated="",
+        tags=[],
+        source_url="",
+        evernote_notebook="Test",
+        evernote_guid="",
+    )
+    result = writer.write(metadata, "Contenu", {})
+
+    assert result.status == "write_error"
+    assert "title" in (result.error_detail or "").lower() or "guid" in (result.error_detail or "").lower()
+
+
+def test_writer_force_overwrite_intra_session(tmp_path):
+    """force_overwrite=True écrase aussi en intra-session (même slug deux fois)."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet", force_overwrite=True)
+
+    metadata1 = _minimal_metadata(title="Facture", guid="abc-123")
+    metadata2 = _minimal_metadata(title="Facture", guid="def-456")
+
+    r1 = writer.write(metadata1, "Contenu 1", {})
+    r2 = writer.write(metadata2, "Contenu 2", {})
+
+    assert r1.final_filename == "Facture.md"
+    assert r2.final_filename == "Facture.md"
+    assert r2.status == "ok"
+
+    content = r2.final_path.read_text(encoding="utf-8")
+    assert "Contenu 2" in content
+    assert "Contenu 1" not in content
+
+
+def test_writer_placeholder_regex_strict(tmp_path):
+    """Placeholder hash hex uniquement : {{ATTACHMENT:xyz!@#}} n'est pas résolu."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = _minimal_metadata(title="Test", guid="abc-123")
+
+    result = writer.write(
+        metadata=metadata,
+        markdown_content="Texte avec {{ATTACHMENT:xyz!@#}} non-hex et {{ATTACHMENT:abc123}} hex",
+        attachment_map={},
+    )
+
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "{{ATTACHMENT:xyz!@#}}" in content
+    assert "abc123" in result.unresolved_placeholders
+
+
+def test_metadata_extractor_yaml_escape_newline(tmp_path):
+    """Échappement YAML : retours ligne dans titre remplacés par espaces."""
+    from src.enex_parser import RawNote
+    from src.metadata_extractor import extract_metadata, to_yaml_frontmatter
+
+    raw = RawNote(
+        title="Titre avec\nretour ligne",
+        content_xhtml=None,
+        created=None,
+        updated=None,
+        tags=[],
+        source_url=None,
+        guid="abc-123",
+        attachments=[],
+    )
+    meta = extract_metadata(raw, notebook_name="Test")
+    yaml = to_yaml_frontmatter(meta)
+
+    title_line = [l for l in yaml.split("\n") if l.startswith("title:")][0]
+    assert "\n" not in title_line[6:]
+    assert "Titre avec retour ligne" in yaml
+
+
+def test_metadata_extractor_yaml_escape_quote(tmp_path):
+    """Échappement YAML : guillemets doubles dans titre sont échappés avec backslash."""
+    from src.enex_parser import RawNote
+    from src.metadata_extractor import extract_metadata, to_yaml_frontmatter
+
+    raw = RawNote(
+        title='Titre avec "guillemets"',
+        content_xhtml=None,
+        created=None,
+        updated=None,
+        tags=[],
+        source_url=None,
+        guid="abc-123",
+        attachments=[],
+    )
+    meta = extract_metadata(raw, notebook_name="Test")
+    yaml = to_yaml_frontmatter(meta)
+
+    assert '\\"guillemets\\"' in yaml
+
+
+def test_writer_tmp_cleanup_existing(tmp_path):
+    """Un .tmp orphelin préexistant (non-symlink) est nettoyé avant écriture."""
+    from src.writer import Writer
+    notebook_dir = tmp_path / "Carnet"
+    notebook_dir.mkdir()
+
+    orphan_tmp = notebook_dir / "Facture.md.tmp"
+    orphan_tmp.write_text("contenu orphelin d'une session précédente", encoding="utf-8")
+
+    writer = Writer(notebook_dir=notebook_dir)
+    metadata = _minimal_metadata(title="Facture", guid="abc-123")
+    result = writer.write(metadata, "Nouveau contenu", {})
+
+    assert result.status == "ok"
+    assert not orphan_tmp.exists()
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "Nouveau contenu" in content
