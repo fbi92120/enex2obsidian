@@ -34,6 +34,13 @@ _REQUIRED_FRONTMATTER_KEYS = {
     "source_url", "evernote_notebook", "evernote_guid",
 }
 
+# Regex patterns shared across PDF embed and wikilink tests
+_PDF_CLASSIC_LINK = re.compile(
+    r"\[[^\]]*\.pdf\]\(attachments/[^)]+\.pdf\)", re.IGNORECASE
+)
+_PDF_WIKILINK = re.compile(r"!\[\[attachments/[^\]]+\.pdf\]\]", re.IGNORECASE)
+_WIKILINK_TARGET = re.compile(r"!\[\[attachments/([^\]]+)\]\]")
+
 
 # ---------------------------------------------------------------------------
 # Shared fixture — pipeline runs once per test module
@@ -193,20 +200,30 @@ def test_smoke_all_filenames_nfc(migrated_vault):
 # ---------------------------------------------------------------------------
 
 def test_smoke_pdf_uses_wikilink_embed(migrated_vault):
-    """At least one .md must contain a PDF embed wikilink ![[attachments/…pdf]].
+    """PDFs must use ![[attachments/…pdf]] embed wikilinks, never [text](attachments/…pdf).
 
-    Regression guard for V1.8: PDFs must use ![[...]] not [...](...) format.
-    The fixture contains at least 2 notes with PDF attachments.
+    Two-part assertion (V1.8 regression guard):
+    1. No .md contains a classic Markdown PDF link — even a single one means a regression.
+    2. At least one .md contains a PDF embed wikilink (fixture has PDF attachments).
     """
     vault = migrated_vault["vault"]
-    pdf_embed_re = re.compile(r'!\[\[attachments/[^\]]+\.pdf\]\]', re.IGNORECASE)
-    matching = [
-        md.name for md in vault.rglob("*.md")
-        if pdf_embed_re.search(md.read_text(encoding="utf-8"))
-    ]
-    assert matching, (
-        "No .md file contains a PDF embed wikilink ![[attachments/…pdf]]. "
-        "The fixture has PDF attachments — check _EMBED_MIMES in writer.py."
+    classic_offenders = []
+    wikilink_count = 0
+
+    for md_file in vault.rglob("*.md"):
+        content = md_file.read_text(encoding="utf-8")
+        for m in _PDF_CLASSIC_LINK.finditer(content):
+            classic_offenders.append((md_file.name, m.group(0)))
+        if _PDF_WIKILINK.search(content):
+            wikilink_count += 1
+
+    assert not classic_offenders, (
+        f"PDFs rendered as Markdown links instead of wikilink embeds "
+        f"(V1.8 regression): {classic_offenders}"
+    )
+    assert wikilink_count > 0, (
+        f"No PDF wikilink embed found across {len(list(vault.rglob('*.md')))} .md files "
+        f"— fixture expected to contain at least one PDF (check _EMBED_MIMES in writer.py)"
     )
 
 
@@ -325,3 +342,78 @@ def test_smoke_conservation_count(migrated_vault):
         f"expected source_count={source_count}. "
         f"Silent loss detected: {source_count - total} note(s) unaccounted for."
     )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 11 — Wikilink targets are NFC and point to existing files (V1.8)
+# ---------------------------------------------------------------------------
+
+def test_smoke_wikilinks_nfc_and_resolvable(migrated_vault):
+    """Every ![[attachments/CIBLE]] in .md files must be NFC and resolve to a real file.
+
+    Covers the V1.8 bug from the 'internal links' angle: a wikilink written in
+    NFD form breaks Obsidian's link resolution even when the file on disk is NFC,
+    and even when test_smoke_all_filenames_nfc passes.
+    """
+    vault = migrated_vault["vault"]
+    attachments_dir = migrated_vault["notebook_dir"] / "attachments"
+
+    nfd_links = []
+    broken_links = []
+
+    for md_file in vault.rglob("*.md"):
+        content = md_file.read_text(encoding="utf-8")
+        for target in _WIKILINK_TARGET.findall(content):
+            if not unicodedata.is_normalized("NFC", target):
+                nfd_links.append((md_file.name, target))
+            if not (attachments_dir / target).exists():
+                broken_links.append((md_file.name, target))
+
+    assert not nfd_links, (
+        f"Wikilink targets NOT in NFC form (V1.8 regression — Obsidian resolves in NFC): "
+        f"{nfd_links}"
+    )
+    assert not broken_links, (
+        f"Wikilinks point to non-existent files in attachments/: {broken_links}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 12 — Log files present and non-empty (SPECS Bloc 5)
+# ---------------------------------------------------------------------------
+
+def test_smoke_logs_present_and_non_empty(migrated_vault):
+    """SPECS Bloc 5 — the 3 reporter files must exist, be unique, and be non-empty.
+
+    Filenames per reporter.py: migration-*.log, errors-*.csv, collisions-*.csv.
+    The log must be non-empty. The CSV files must contain at least their header line.
+    """
+    log_dir = migrated_vault["log_dir"]
+
+    migration_logs = list(log_dir.glob("migration-*.log"))
+    errors_csvs = list(log_dir.glob("errors-*.csv"))
+    collisions_csvs = list(log_dir.glob("collisions-*.csv"))
+
+    assert len(migration_logs) == 1, (
+        f"Expected exactly 1 migration-*.log, got {len(migration_logs)}: "
+        f"{[p.name for p in migration_logs]}"
+    )
+    assert len(errors_csvs) == 1, (
+        f"Expected exactly 1 errors-*.csv, got {len(errors_csvs)}: "
+        f"{[p.name for p in errors_csvs]}"
+    )
+    assert len(collisions_csvs) == 1, (
+        f"Expected exactly 1 collisions-*.csv, got {len(collisions_csvs)}: "
+        f"{[p.name for p in collisions_csvs]}"
+    )
+
+    assert migration_logs[0].stat().st_size > 0, (
+        f"Migration log is empty: {migration_logs[0].name}"
+    )
+
+    for csv_path in errors_csvs + collisions_csvs:
+        text = csv_path.read_text(encoding="utf-8")
+        first_line = text.split("\n", 1)[0] if text else ""
+        assert first_line.strip(), (
+            f"CSV file has no header line: {csv_path.name}"
+        )
