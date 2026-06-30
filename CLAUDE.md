@@ -3,7 +3,7 @@
 **Version** : 1.6
 **Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : Étape 10/14 V1.1 validée (writer + audit Codex) — étape 11/14 à démarrer (orchestrateur)
+**Statut** : Étape 11/14 validée (orchestrateur) — étape 12/14 à démarrer (test smoke)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
