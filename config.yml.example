@@ -12,10 +12,49 @@ notebook_list: ~/Migration-Evernote/carnets-a-migrer.txt
 
 # Plafond de taille d'une pièce jointe (au-delà : log + skip)
 # Valeur par défaut : 200 Mo — suffisant pour PDFs, Word, Excel, images standard
-# À augmenter uniquement si le corpus contient des vidéos ou archives volumineuses
 attachment_size_limit_mb: 200
 
 # Comportement si un fichier .md cible existe déjà
 # false = skip + log (défaut sécuritaire)
-# true  = écrasement (réservé à --force CLI, jamais en config)
+# true  = écrasement (déconseillé en config — préférer --force en CLI)
 force_overwrite: false
+
+# Allowlist des types MIME à migrer (V1.6)
+# Toute pièce jointe dont le MIME est absent de cette liste est ignorée et tracée
+# dans le rapport erreurs (cause : mime_excluded).
+# Filtrage actif depuis V1.6 — protège contre les ressources annexes de captures web
+# (CSS, fonts, icônes web) qui pollueraient le vault.
+# Supprimer cette clé ou la laisser vide = aucun filtrage MIME (tout est copié).
+allowed_mime_types:
+  # Documents bureautiques
+  - application/pdf
+  - application/msword
+  - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  - application/vnd.ms-excel
+  - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+  - application/vnd.ms-powerpoint
+  - application/vnd.openxmlformats-officedocument.presentationml.presentation
+  - application/vnd.oasis.opendocument.text
+  - application/vnd.oasis.opendocument.spreadsheet
+  - application/vnd.oasis.opendocument.presentation
+  - application/rtf
+  - text/rtf
+  - text/plain
+  - text/csv
+  # Images (pas SVG/WebP/GIF — ressources web annexes)
+  - image/jpeg
+  - image/png
+  - image/heic
+  - image/heif
+  - image/tiff
+  # Email
+  - message/rfc822
+  - application/vnd.ms-outlook
+  # Archives
+  - application/zip
+  - application/x-7z-compressed
+  - application/x-rar-compressed
+  # Audio
+  - audio/mpeg
+  - audio/mp4
+  - audio/wav
