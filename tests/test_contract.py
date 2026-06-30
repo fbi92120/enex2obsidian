@@ -452,9 +452,30 @@ def test_ct13_attachment_collision(tmp_path):
     assert (target_dir / "scan-2.pdf").exists()
 
 
-def test_ct14_md_collision():
+def test_ct14_md_collision(tmp_path):
     """CT-14: Two notes with slug 'Facture' result in 'Facture.md' then 'Facture-2.md'."""
-    pytest.skip("Étape 10 de la séquence")
+    from src.writer import Writer
+    from src.metadata_extractor import NoteMetadata
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+
+    def _make_meta(guid):
+        return NoteMetadata(
+            title="Facture", created="", updated="", tags=[],
+            source_url="", evernote_notebook="Carnet", evernote_guid=guid,
+        )
+
+    r1 = writer.write(_make_meta("guid-001"), "Contenu 1", {})
+    r2 = writer.write(_make_meta("guid-002"), "Contenu 2", {})
+
+    assert r1.status == "ok"
+    assert r1.final_filename == "Facture.md"
+    assert r1.collided is False
+    assert r2.status == "ok"
+    assert r2.final_filename == "Facture-2.md"
+    assert r2.collided is True
+    assert (tmp_path / "Carnet" / "Facture.md").exists()
+    assert (tmp_path / "Carnet" / "Facture-2.md").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -717,9 +738,22 @@ def test_ct16_attachment_size_exceeded(tmp_path):
 # CT-17 — Note without title
 # ---------------------------------------------------------------------------
 
-def test_ct17_note_without_title():
+def test_ct17_note_without_title(tmp_path):
     """CT-17: Note without title gets slug 'note-[8-chars-guid].md' and title: '' in frontmatter."""
-    pytest.skip("Étape 2 de la séquence")
+    from src.writer import Writer
+    from src.metadata_extractor import NoteMetadata
+
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = NoteMetadata(
+        title="", created="", updated="", tags=[],
+        source_url="", evernote_notebook="Carnet", evernote_guid="abc12345-def-456",
+    )
+    result = writer.write(metadata, "Contenu sans titre", {})
+
+    assert result.status == "ok"
+    assert result.final_filename == "note-abc12345.md"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert 'title: ""' in content
 
 
 # ---------------------------------------------------------------------------
@@ -1214,3 +1248,229 @@ def test_reporter_close_robust_to_partial_failure(tmp_path):
 
     assert reporter._errors_fh.closed
     assert reporter._coll_fh.closed
+
+
+# ---------------------------------------------------------------------------
+# Étape 10 — writer : Writer, WriteResult, WriteStatus
+# ---------------------------------------------------------------------------
+
+def _minimal_metadata(title: str = "Test", guid: str = "abc-123"):
+    from src.metadata_extractor import NoteMetadata
+    return NoteMetadata(
+        title=title, created="", updated="", tags=[],
+        source_url="", evernote_notebook="Test Notebook", evernote_guid=guid,
+    )
+
+
+def test_writer_basic_write(tmp_path):
+    """Écriture basique : frontmatter + contenu Markdown dans un .md."""
+    from src.writer import Writer
+    from src.metadata_extractor import NoteMetadata
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = NoteMetadata(
+        title="Facture EDF",
+        created="2024-03-15T09:23:00", updated="2024-03-15T09:25:00",
+        tags=["facture", "edf"], source_url="",
+        evernote_notebook="Comptabilité 2024", evernote_guid="abc-123-def-456",
+    )
+    result = writer.write(metadata=metadata, markdown_content="Contenu de la note.", attachment_map={})
+    assert result.status == "ok"
+    assert result.final_path == tmp_path / "Carnet" / "Facture-EDF.md"
+    assert result.final_path.exists()
+    content = result.final_path.read_text(encoding="utf-8")
+    assert content.startswith("---")
+    assert 'title: "Facture EDF"' in content
+    assert "Contenu de la note." in content
+
+
+def test_writer_creates_notebook_dir(tmp_path):
+    """notebook_dir est créé automatiquement avec ses parents."""
+    from src.writer import Writer
+    target = tmp_path / "a" / "b" / "Carnet"
+    writer = Writer(notebook_dir=target)
+    result = writer.write(_minimal_metadata(title="Test", guid="abc-123"), "Contenu", {})
+    assert result.status == "ok"
+    assert target.exists()
+
+
+def test_writer_resolves_image_placeholder(tmp_path):
+    """Placeholder {{ATTACHMENT:hash}} d'une image → embed Obsidian ![[...]]"""
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    attachment_map = {
+        "abc123def": AttachmentResult(
+            hash="abc123def", status="ok", final_filename="photo.jpg",
+            mime="image/jpeg", original_filename="photo.jpg", size_bytes=1000,
+            error_detail=None, note_title="...", note_guid="...",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Note avec image", guid="abc-123"),
+        markdown_content="Voici une photo : {{ATTACHMENT:abc123def}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "![[photo.jpg]]" in content
+    assert "{{ATTACHMENT:" not in content
+
+
+def test_writer_resolves_pdf_placeholder(tmp_path):
+    """Placeholder PDF → lien Markdown [nom](attachments/nom) URL-encodé."""
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    attachment_map = {
+        "def456": AttachmentResult(
+            hash="def456", status="ok", final_filename="Facture EDF.pdf",
+            mime="application/pdf", original_filename="Facture EDF.pdf", size_bytes=2000,
+            error_detail=None, note_title="...", note_guid="...",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Note avec PDF", guid="abc-123"),
+        markdown_content="Voici un PDF : {{ATTACHMENT:def456}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "[Facture EDF.pdf](attachments/Facture%20EDF.pdf)" in content
+
+
+def test_writer_unresolved_placeholder(tmp_path):
+    """Placeholder sans correspondance dans attachment_map → signalé."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    result = writer.write(
+        metadata=_minimal_metadata(title="Note orpheline", guid="abc-123"),
+        markdown_content="Référence orpheline : {{ATTACHMENT:ghost999}}",
+        attachment_map={},
+    )
+    assert result.status == "ok"
+    assert "ghost999" in result.unresolved_placeholders
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "pièce jointe non résolue" in content
+
+
+def test_writer_skipped_attachment_placeholder(tmp_path):
+    """Placeholder pour pièce jointe skippée → message clair, non dans unresolved."""
+    from src.writer import Writer
+    from src.attachment_handler import AttachmentResult
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    attachment_map = {
+        "svg123": AttachmentResult(
+            hash="svg123", status="skipped_mime", final_filename=None,
+            mime="image/svg+xml", original_filename="logo.svg", size_bytes=500,
+            error_detail="MIME hors allowlist", note_title="...", note_guid="...",
+        )
+    }
+    result = writer.write(
+        metadata=_minimal_metadata(title="Note avec SVG", guid="abc-123"),
+        markdown_content="Logo : {{ATTACHMENT:svg123}}",
+        attachment_map=attachment_map,
+    )
+    assert result.status == "ok"
+    assert "svg123" not in result.unresolved_placeholders
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "pièce jointe non disponible" in content
+    assert "skipped_mime" in content
+
+
+def test_writer_skipped_existing_no_force(tmp_path):
+    """Si .md cible existe et force_overwrite=False → skipped_existing."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet", force_overwrite=False)
+    metadata = _minimal_metadata(title="Facture", guid="abc-123")
+    r1 = writer.write(metadata, "Contenu 1", {})
+    assert r1.status == "ok"
+
+    writer2 = Writer(notebook_dir=tmp_path / "Carnet", force_overwrite=False)
+    r2 = writer2.write(metadata, "Contenu 2", {})
+    assert r2.status == "skipped_existing"
+    assert r2.final_path == r1.final_path
+    assert "Contenu 1" in r1.final_path.read_text(encoding="utf-8")
+
+
+def test_writer_force_overwrite(tmp_path):
+    """Si force_overwrite=True, .md cible existant est écrasé."""
+    from src.writer import Writer
+    writer1 = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = _minimal_metadata(title="Facture", guid="abc-123")
+    writer1.write(metadata, "Contenu 1", {})
+
+    writer2 = Writer(notebook_dir=tmp_path / "Carnet", force_overwrite=True)
+    r2 = writer2.write(metadata, "Contenu 2", {})
+    assert r2.status == "ok"
+    content = r2.final_path.read_text(encoding="utf-8")
+    assert "Contenu 2" in content
+    assert "Contenu 1" not in content
+
+
+def test_writer_intra_session_collision(tmp_path):
+    """Trois notes de même titre dans la même session → suffixes -2, -3."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    m1 = _minimal_metadata(title="Réunion", guid="abc-123")
+    m2 = _minimal_metadata(title="Réunion", guid="def-456")
+    m3 = _minimal_metadata(title="Réunion", guid="ghi-789")
+
+    r1 = writer.write(m1, "Contenu 1", {})
+    r2 = writer.write(m2, "Contenu 2", {})
+    r3 = writer.write(m3, "Contenu 3", {})
+
+    assert r1.final_filename == "Reunion.md"
+    assert r1.collided is False
+    assert r2.final_filename == "Reunion-2.md"
+    assert r2.collided is True
+    assert r3.final_filename == "Reunion-3.md"
+    assert r3.collided is True
+    assert len(list((tmp_path / "Carnet").glob("*.md"))) == 3
+
+
+def test_writer_path_traversal_blocked(tmp_path):
+    """Slug d'un titre traversal → fichier strictement dans notebook_dir."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = _minimal_metadata(title="../../etc/passwd", guid="abc-123")
+    result = writer.write(metadata, "Contenu", {})
+    if result.status == "ok":
+        assert (tmp_path / "Carnet").resolve() in result.final_path.resolve().parents
+    else:
+        assert result.status == "traversal_blocked"
+
+
+def test_writer_atomic_write_no_tmp_remaining(tmp_path):
+    """Après une écriture réussie, pas de fichier .tmp restant."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    writer.write(_minimal_metadata(title="Test", guid="abc-123"), "Contenu", {})
+    assert len(list((tmp_path / "Carnet").glob("*.tmp"))) == 0
+
+
+def test_writer_unicode_preserved(tmp_path):
+    """Caractères Unicode dans le contenu et le frontmatter sont préservés."""
+    from src.writer import Writer
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    metadata = _minimal_metadata(title="Compte rendu — Réunion", guid="abc-123")
+    metadata.tags = ["réunion", "stratégie"]
+    result = writer.write(metadata, "Contenu avec é, è, à, ç, ñ", {})
+    assert result.status == "ok"
+    content = result.final_path.read_text(encoding="utf-8")
+    assert "é, è, à, ç, ñ" in content
+    assert "Compte rendu — Réunion" in content
+
+
+def test_writer_no_exception_on_disk_error(tmp_path, monkeypatch):
+    """En cas d'erreur disque (os.replace), retourne WriteResult status='write_error'."""
+    from src.writer import Writer
+
+    def failing_replace(*args, **kwargs):
+        raise OSError("Simulated disk error")
+
+    monkeypatch.setattr("os.replace", failing_replace)
+    writer = Writer(notebook_dir=tmp_path / "Carnet")
+    result = writer.write(_minimal_metadata(title="Test", guid="abc-123"), "Contenu", {})
+    assert result.status == "write_error"
+    assert result.final_path is None
+    assert "Simulated" in (result.error_detail or "")
