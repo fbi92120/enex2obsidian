@@ -12,3 +12,6 @@ logs/
 .claude/
 .codex/
 PROMPT-*.md
+
+# Exception : fixture de test synthétique sans données perso
+!tests/fixtures/testmigration.enex
