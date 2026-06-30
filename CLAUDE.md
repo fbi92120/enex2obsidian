@@ -3,7 +3,7 @@
 **Version** : 1.6
 **Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : Étape 8/14 validée (reporter) — étape 9/14 à démarrer (tests/test_contract.py — activation tests writer)
+**Statut** : Étape 8/14 V1.1 validée (reporter + audit Codex) — étape 9/14 à démarrer (consolidation tests)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
