@@ -890,3 +890,207 @@ def test_notebook_selector_hash_in_middle_kept(tmp_path):
     f = tmp_path / "carnets.txt"
     f.write_text("Carnet # avec hash\n", encoding="utf-8")
     assert load_notebook_list(f) == ["Carnet # avec hash"]
+
+
+# ---------------------------------------------------------------------------
+# Étape 8 — reporter : Reporter, LogLevel, ErrorLevel, CollisionType
+# ---------------------------------------------------------------------------
+
+def test_reporter_creates_three_files(tmp_path):
+    """Reporter crée 3 fichiers timestampés dans log_dir."""
+    from src.reporter import Reporter
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.close()
+    files = list(tmp_path.glob("*"))
+    names = sorted(f.name for f in files)
+    assert len(files) == 3
+    assert any(n.startswith("migration-") and n.endswith(".log") for n in names)
+    assert any(n.startswith("collisions-") and n.endswith(".csv") for n in names)
+    assert any(n.startswith("errors-") and n.endswith(".csv") for n in names)
+
+
+def test_reporter_creates_log_dir(tmp_path):
+    """log_dir est créé automatiquement avec ses parents."""
+    from src.reporter import Reporter
+    target = tmp_path / "a" / "b" / "logs"
+    reporter = Reporter(log_dir=target)
+    reporter.close()
+    assert target.exists()
+    assert target.is_dir()
+
+
+def test_reporter_log_format(tmp_path):
+    """Le log texte est timestampé au format ISO 8601 + niveau."""
+    from src.reporter import Reporter, LogLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.log(LogLevel.INFO, "Démarrage migration")
+    reporter.close()
+    log_file = next(tmp_path.glob("migration-*.log"))
+    content = log_file.read_text(encoding="utf-8")
+    assert "[INFO] Démarrage migration" in content
+    assert content[0].isdigit()
+    first_line = content.split("\n")[0]
+    assert "Z" not in first_line.split(" [")[0]
+
+
+def test_reporter_record_error_csv(tmp_path):
+    """record_error écrit une ligne CSV bien formée."""
+    import csv as csv_mod
+    from src.reporter import Reporter, ErrorLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.record_error(
+        level=ErrorLevel.ATTACHMENT,
+        cause="mime_excluded",
+        detail="MIME 'image/svg+xml' hors allowlist",
+        notebook="Comptabilité 2024",
+        note_guid="abc-123",
+        note_title="Plaquette",
+        attachment_filename="logo.svg",
+    )
+    reporter.close()
+    errors_file = next(tmp_path.glob("errors-*.csv"))
+    rows = list(csv_mod.DictReader(errors_file.open(encoding="utf-8")))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["level"] == "attachment"
+    assert row["cause"] == "mime_excluded"
+    assert row["detail"] == "MIME 'image/svg+xml' hors allowlist"
+    assert row["notebook"] == "Comptabilité 2024"
+    assert row["note_guid"] == "abc-123"
+    assert row["note_title"] == "Plaquette"
+    assert row["attachment_filename"] == "logo.svg"
+
+
+def test_reporter_record_error_with_none_fields(tmp_path):
+    """Les champs None deviennent chaîne vide dans le CSV (pas 'None')."""
+    import csv as csv_mod
+    from src.reporter import Reporter, ErrorLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.record_error(
+        level=ErrorLevel.NOTEBOOK,
+        cause="notebook_not_found",
+        detail="Carnet 'X' absent du dossier exports-enex",
+    )
+    reporter.close()
+    errors_file = next(tmp_path.glob("errors-*.csv"))
+    rows = list(csv_mod.DictReader(errors_file.open(encoding="utf-8")))
+    assert rows[0]["notebook"] == ""
+    assert rows[0]["note_guid"] == ""
+    assert rows[0]["note_title"] == ""
+    assert rows[0]["attachment_filename"] == ""
+
+
+def test_reporter_record_error_also_logs(tmp_path):
+    """record_error écrit aussi une ligne ERROR dans le log texte."""
+    from src.reporter import Reporter, ErrorLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.record_error(
+        level=ErrorLevel.NOTE,
+        cause="xhtml_malformed",
+        detail="conversion partielle",
+        notebook="Comptabilité 2024",
+        note_guid="abc-123",
+        note_title="Facture EDF",
+    )
+    reporter.close()
+    log_file = next(tmp_path.glob("migration-*.log"))
+    content = log_file.read_text(encoding="utf-8")
+    assert "[ERROR]" in content
+    assert "xhtml_malformed" in content
+
+
+def test_reporter_record_collision_csv(tmp_path):
+    """record_collision écrit une ligne CSV bien formée."""
+    import csv as csv_mod
+    from src.reporter import Reporter, CollisionType
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.record_collision(
+        kind=CollisionType.MD,
+        original_name="Facture",
+        final_name="Facture-2",
+        notebook="Comptabilité 2024",
+        note_guid="abc-123",
+    )
+    reporter.close()
+    coll_file = next(tmp_path.glob("collisions-*.csv"))
+    rows = list(csv_mod.DictReader(coll_file.open(encoding="utf-8")))
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "md"
+    assert rows[0]["original_name"] == "Facture"
+    assert rows[0]["final_name"] == "Facture-2"
+    assert rows[0]["notebook"] == "Comptabilité 2024"
+
+
+def test_reporter_csv_handles_special_chars(tmp_path):
+    """CSV gère correctement virgules, guillemets, retours ligne dans les champs."""
+    import csv as csv_mod
+    from src.reporter import Reporter, ErrorLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.record_error(
+        level=ErrorLevel.NOTE,
+        cause="parse_error",
+        detail='Erreur: champ avec "quote" et, virgule\net retour ligne',
+        notebook="Carnet, virgulé",
+        note_title='Note avec "quotes"',
+    )
+    reporter.close()
+    errors_file = next(tmp_path.glob("errors-*.csv"))
+    rows = list(csv_mod.DictReader(errors_file.open(encoding="utf-8")))
+    assert len(rows) == 1
+    assert "virgule" in rows[0]["detail"]
+    assert "retour ligne" in rows[0]["detail"]
+    assert rows[0]["notebook"] == "Carnet, virgulé"
+    assert rows[0]["note_title"] == 'Note avec "quotes"'
+
+
+def test_reporter_csv_headers_present(tmp_path):
+    """Les CSV ont une ligne d'en-tête."""
+    from src.reporter import Reporter
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.close()
+    errors_file = next(tmp_path.glob("errors-*.csv"))
+    first_line = errors_file.read_text(encoding="utf-8").split("\n")[0]
+    assert "timestamp" in first_line
+    assert "level" in first_line
+    assert "cause" in first_line
+
+
+def test_reporter_close_idempotent(tmp_path):
+    """close() peut être appelé plusieurs fois sans erreur."""
+    from src.reporter import Reporter
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.close()
+    reporter.close()
+
+
+def test_reporter_context_manager(tmp_path):
+    """Reporter peut être utilisé comme context manager."""
+    from src.reporter import Reporter, LogLevel
+    with Reporter(log_dir=tmp_path) as reporter:
+        reporter.log(LogLevel.INFO, "test")
+    log_file = next(tmp_path.glob("migration-*.log"))
+    assert "test" in log_file.read_text(encoding="utf-8")
+
+
+def test_reporter_flush_after_each_write(tmp_path):
+    """Les écritures sont flushées immédiatement (lecture en cours d'exécution possible)."""
+    from src.reporter import Reporter, LogLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.log(LogLevel.INFO, "ligne 1")
+    log_file = next(tmp_path.glob("migration-*.log"))
+    content = log_file.read_text(encoding="utf-8")
+    assert "ligne 1" in content
+    reporter.close()
+
+
+def test_reporter_two_instances_distinct_files(tmp_path):
+    """Deux instances créées à des moments différents produisent des fichiers distincts."""
+    import time
+    from src.reporter import Reporter
+    r1 = Reporter(log_dir=tmp_path)
+    time.sleep(1.1)
+    r2 = Reporter(log_dir=tmp_path)
+    r1.close()
+    r2.close()
+    log_files = list(tmp_path.glob("migration-*.log"))
+    assert len(log_files) == 2
