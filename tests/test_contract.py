@@ -691,9 +691,26 @@ def test_attachment_handler_preserves_accents_in_filename(tmp_path):
 # CT-16 — Attachment size limit enforcement
 # ---------------------------------------------------------------------------
 
-def test_ct16_attachment_size_exceeded():
-    """CT-16: Attachment over size limit is not copied; error logged; .md contains notice."""
-    pytest.skip("Étape 6 de la séquence")
+def test_ct16_attachment_size_exceeded(tmp_path):
+    """CT-16: Attachment over size limit is not copied; status skipped_size."""
+    import base64
+    from src.enex_parser import RawAttachment
+    from src.attachment_handler import AttachmentHandler
+
+    # 1 Mo + 1 byte dépasse la limite de 1 Mo
+    oversized_data = b"x" * (1 * 1024 * 1024 + 1)
+    raw = RawAttachment(
+        data_base64=base64.b64encode(oversized_data).decode(),
+        mime="application/pdf",
+        file_name="big.pdf",
+        hash=None,
+    )
+    handler = AttachmentHandler(target_dir=tmp_path / "attachments", size_limit_mb=1)
+    result = handler.handle(raw, note_title="Test", note_guid="guid1")
+
+    assert result.status == "skipped_size"
+    assert result.final_filename is None
+    assert not (tmp_path / "attachments" / "big.pdf").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +728,24 @@ def test_ct17_note_without_title():
 
 def test_ct18_empty_tag_after_normalization():
     """CT-18: Tag that normalizes to empty string is not included in the tags list."""
-    pytest.skip("Étape 4 de la séquence")
+    from src.enex_parser import RawNote
+    from src.metadata_extractor import extract_metadata
+
+    raw = RawNote(
+        title="Facture EDF",
+        content_xhtml=None,
+        created="20240101T120000Z",
+        updated="20240101T120000Z",
+        tags=["facture", "!!!"],   # "!!!" normalise en ""
+        source_url=None,
+        guid="test-guid-001",
+        attachments=[],
+    )
+    metadata = extract_metadata(raw, notebook_name="Comptabilité")
+
+    assert "facture" in metadata.tags
+    assert "" not in metadata.tags
+    assert len(metadata.tags) < len(raw.tags)
 
 
 # ---------------------------------------------------------------------------
