@@ -1,38 +1,327 @@
 """
-test_smoke — Integration smoke test running the full pipeline on a real .enex file.
+test_smoke — Integration smoke test for the full enex2obsidian pipeline.
 
-Requires the ENEX_REFERENCE_FILE environment variable pointing to an existing .enex file.
-Skipped automatically if the variable is not set or the file does not exist.
+Runs once on tests/fixtures/testmigration.enex (7 notes, committed fixture,
+no personal data). Verifies 10 critical invariants on the produced vault,
+including regressions introduced in V1.8 (NFC normalization, PDF embed format).
+
+Scope: structural verification only — content correctness is human-reviewed.
 
 Run with:
-    export ENEX_REFERENCE_FILE=~/Migration-Evernote/exports-enex/Bail-test.enex
-    pytest tests/test_smoke.py
+    pytest tests/test_smoke.py -v
 """
 
-import os
+import csv
+import re
+import shutil
+import unicodedata
+from pathlib import Path
+
 import pytest
+import yaml
+from lxml import etree
+
+from enex2obsidian import run_migration, DEFAULT_ALLOWED_MIME_TYPES
+from src.reporter import Reporter
 
 
-def test_smoke():
+_FIXTURE_ENEX = Path(__file__).parent / "fixtures" / "testmigration.enex"
+_NOTEBOOK_NAME = "testmigration"
+
+# Required frontmatter keys per SPECS.md Bloc 3
+_REQUIRED_FRONTMATTER_KEYS = {
+    "title", "created", "updated", "tags",
+    "source_url", "evernote_notebook", "evernote_guid",
+}
+
+
+# ---------------------------------------------------------------------------
+# Shared fixture — pipeline runs once per test module
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def migrated_vault(tmp_path_factory):
     """
-    Full pipeline smoke test on the ENEX_REFERENCE_FILE carnet.
+    Builds an isolated environment and runs the full pipeline once on
+    tests/fixtures/testmigration.enex.
 
-    Setup: creates a temporary vault directory and log directory.
-    Execution: runs enex2obsidian on the reference .enex file.
-
-    Verifies:
-        - At least 1 .md file produced in [tmp_vault]/[notebook_slug]/
-        - attachments/ subdirectory present if the carnet has attachments
-        - Log file and CSV files present and non-empty in log directory
-        - No files written outside the temporary vault directory
-        - .md count + CSV error rows at "note" level == total note count in .enex
-
-    Does NOT validate content correctness — that is covered by CT tests and human review.
-
-    Skips if ENEX_REFERENCE_FILE is not defined or the pointed file does not exist.
+    Returns a dict:
+      vault:         Path  — root of the produced Obsidian vault
+      log_dir:       Path  — directory containing migration logs and CSV files
+      notebook_dir:  Path  — notebook subdirectory inside vault
+      source_count:  int   — number of <note> elements in the source ENEX
+      exit_code:     int   — 0 if pipeline completed without uncaught exception
+      errors_csv:    Path  — path to the errors-*.csv produced by Reporter
     """
-    enex_path = os.environ.get("ENEX_REFERENCE_FILE")
-    if not enex_path or not os.path.exists(os.path.expanduser(enex_path)):
-        pytest.skip("ENEX_REFERENCE_FILE non défini ou fichier introuvable")
+    vault = tmp_path_factory.mktemp("smoke-vault")
+    log_dir = tmp_path_factory.mktemp("smoke-logs")
+    source_dir = tmp_path_factory.mktemp("smoke-source")
 
-    pytest.skip("Étape 12 de la séquence")
+    # Isolate the fixture so the pipeline never touches tests/fixtures/ directly
+    shutil.copy2(_FIXTURE_ENEX, source_dir / _FIXTURE_ENEX.name)
+
+    # Count notes before the run — used for conservation invariant
+    tree = etree.parse(
+        str(_FIXTURE_ENEX),
+        parser=etree.XMLParser(recover=True, huge_tree=True),
+    )
+    source_count = len(tree.getroot().findall("note"))
+
+    paths = {
+        "source_directory": source_dir,
+        "vault_path": vault,
+        "log_directory": log_dir,
+        "notebook_list": None,
+        "attachment_size_limit_mb": 200,
+        "allowed_mime_types": DEFAULT_ALLOWED_MIME_TYPES,
+        "force_overwrite": False,
+        "dry_run": False,
+        "single_notebook": _NOTEBOOK_NAME,
+    }
+
+    exit_code = 0
+    try:
+        with Reporter(log_dir=log_dir) as reporter:
+            run_migration(paths, reporter=reporter, dry_run=False)
+    except Exception:
+        exit_code = 1
+
+    errors_csvs = list(log_dir.glob("errors-*.csv"))
+    assert len(errors_csvs) == 1, (
+        f"Expected exactly 1 errors-*.csv in log_dir, "
+        f"found {len(errors_csvs)}: {[p.name for p in errors_csvs]}"
+    )
+
+    # The notebook directory is the single subdirectory created under vault
+    notebook_dirs = [d for d in vault.iterdir() if d.is_dir()]
+    assert len(notebook_dirs) == 1, (
+        f"Expected exactly 1 notebook subdir under vault, "
+        f"found {len(notebook_dirs)}: {[d.name for d in notebook_dirs]}"
+    )
+
+    return {
+        "vault": vault,
+        "log_dir": log_dir,
+        "notebook_dir": notebook_dirs[0],
+        "source_count": source_count,
+        "exit_code": exit_code,
+        "errors_csv": errors_csvs[0],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Invariant 1 — Pipeline exit code
+# ---------------------------------------------------------------------------
+
+def test_smoke_pipeline_exit_code_zero(migrated_vault):
+    """Pipeline must complete without an uncaught exception (exit code 0)."""
+    assert migrated_vault["exit_code"] == 0, (
+        "run_migration raised an uncaught exception — check log_dir for details"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 2 — At least one .md produced
+# ---------------------------------------------------------------------------
+
+def test_smoke_at_least_one_md_produced(migrated_vault):
+    """At least one .md file must exist anywhere under vault/."""
+    vault = migrated_vault["vault"]
+    md_files = list(vault.rglob("*.md"))
+    assert len(md_files) >= 1, (
+        f"No .md files found under vault ({vault}) — pipeline produced no output"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 3 — attachments/ directory present
+# ---------------------------------------------------------------------------
+
+def test_smoke_attachments_folder_exists(migrated_vault):
+    """The attachments/ subdirectory must exist inside the notebook directory."""
+    notebook_dir = migrated_vault["notebook_dir"]
+    attachments_dir = notebook_dir / "attachments"
+    assert attachments_dir.is_dir(), (
+        f"No attachments/ directory under notebook dir {notebook_dir} — "
+        "the fixture contains attachments so this directory must be created"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 4 — No zero-byte attachments  (regression: bug 11b)
+# ---------------------------------------------------------------------------
+
+def test_smoke_no_zero_byte_attachments(migrated_vault):
+    """Every file under attachments/ must be non-empty (regression: bug 11b)."""
+    notebook_dir = migrated_vault["notebook_dir"]
+    attachments_dir = notebook_dir / "attachments"
+    if not attachments_dir.is_dir():
+        pytest.skip("attachments/ not present — covered by test_smoke_attachments_folder_exists")
+
+    zero_byte = [
+        f.name for f in attachments_dir.iterdir()
+        if f.is_file() and f.stat().st_size == 0
+    ]
+    assert not zero_byte, (
+        f"Found {len(zero_byte)} zero-byte file(s) in attachments/: {zero_byte}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 5 — All filenames in vault are NFC  (regression: V1.8)
+# ---------------------------------------------------------------------------
+
+def test_smoke_all_filenames_nfc(migrated_vault):
+    """Every filename (file and directory) under vault/ must be in NFC Unicode form.
+
+    Regression guard for the NFD/NFC mismatch bug found in step 11 (Obsidian
+    broken links for accented PDF filenames).
+    """
+    vault = migrated_vault["vault"]
+    nfd_names = [
+        str(entry.relative_to(vault))
+        for entry in vault.rglob("*")
+        if not unicodedata.is_normalized("NFC", entry.name)
+    ]
+    assert not nfd_names, (
+        f"Found {len(nfd_names)} filename(s) NOT in NFC form (NFD detected): {nfd_names}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 6 — PDFs rendered as embed wikilinks  (regression: V1.8)
+# ---------------------------------------------------------------------------
+
+def test_smoke_pdf_uses_wikilink_embed(migrated_vault):
+    """At least one .md must contain a PDF embed wikilink ![[attachments/…pdf]].
+
+    Regression guard for V1.8: PDFs must use ![[...]] not [...](...) format.
+    The fixture contains at least 2 notes with PDF attachments.
+    """
+    vault = migrated_vault["vault"]
+    pdf_embed_re = re.compile(r'!\[\[attachments/[^\]]+\.pdf\]\]', re.IGNORECASE)
+    matching = [
+        md.name for md in vault.rglob("*.md")
+        if pdf_embed_re.search(md.read_text(encoding="utf-8"))
+    ]
+    assert matching, (
+        "No .md file contains a PDF embed wikilink ![[attachments/…pdf]]. "
+        "The fixture has PDF attachments — check _EMBED_MIMES in writer.py."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 7 — Images rendered as embed wikilinks
+# ---------------------------------------------------------------------------
+
+def test_smoke_image_uses_wikilink_embed(migrated_vault):
+    """At least one .md must contain an image embed wikilink ![[attachments/…(png|jpg|…)]]."""
+    vault = migrated_vault["vault"]
+    img_embed_re = re.compile(
+        r'!\[\[attachments/[^\]]+\.(png|jpg|jpeg|heic|heif|tiff|gif|webp)\]\]',
+        re.IGNORECASE,
+    )
+    matching = [
+        md.name for md in vault.rglob("*.md")
+        if img_embed_re.search(md.read_text(encoding="utf-8"))
+    ]
+    assert matching, (
+        "No .md file contains an image embed wikilink ![[attachments/…png/jpg/…]]. "
+        "The fixture has image attachments — check _EMBED_MIMES in writer.py."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 8 — No files written outside vault  (constitution rule 9)
+# ---------------------------------------------------------------------------
+
+def test_smoke_no_file_outside_vault(migrated_vault):
+    """No .md files must appear in log_dir or source_dir (constitution rule 9: no traversal)."""
+    log_dir = migrated_vault["log_dir"]
+    # The fixture is in source_dir; we check that no .md was created there
+    # Recover source_dir from the only .enex copy present
+    enex_copies = list(log_dir.parent.rglob("testmigration.enex"))
+    # source_dir is the parent of the copied .enex
+    source_dirs = {p.parent for p in enex_copies}
+
+    md_in_log = list(log_dir.rglob("*.md"))
+    assert not md_in_log, (
+        f"Found .md file(s) in log_dir: {[p.name for p in md_in_log]}"
+    )
+
+    for src_dir in source_dirs:
+        md_in_source = list(src_dir.rglob("*.md"))
+        assert not md_in_source, (
+            f"Found .md file(s) in source_dir ({src_dir}): "
+            f"{[p.name for p in md_in_source]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 9 — All frontmatter is valid YAML with required keys
+# ---------------------------------------------------------------------------
+
+def test_smoke_all_frontmatter_yaml_parsable(migrated_vault):
+    """Every .md must have parsable YAML frontmatter containing all required keys."""
+    vault = migrated_vault["vault"]
+    md_files = list(vault.rglob("*.md"))
+    assert md_files, f"No .md files found under vault {vault}"
+
+    for md_path in md_files:
+        content = md_path.read_text(encoding="utf-8")
+        lines = content.split("\n")
+
+        if not lines or lines[0].strip() != "---":
+            first = repr(lines[0]) if lines else "'empty file'"
+            pytest.fail(
+                f"{md_path.name}: does not start with '---' (first line: {first})"
+            )
+
+        try:
+            closing_idx = lines.index("---", 1)
+        except ValueError:
+            pytest.fail(f"{md_path.name}: no closing '---' found for frontmatter block")
+
+        fm_text = "\n".join(lines[1:closing_idx])
+        try:
+            fm = yaml.safe_load(fm_text)
+        except yaml.YAMLError as exc:
+            pytest.fail(f"{md_path.name}: YAML parse error in frontmatter: {exc}")
+
+        assert isinstance(fm, dict), (
+            f"{md_path.name}: frontmatter parsed as {type(fm).__name__}, expected dict"
+        )
+        missing = _REQUIRED_FRONTMATTER_KEYS - set(fm.keys())
+        assert not missing, (
+            f"{md_path.name}: missing required frontmatter keys: {missing}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 10 — Conservation: no silent loss  (constitution rule 2)
+# ---------------------------------------------------------------------------
+
+def test_smoke_conservation_count(migrated_vault):
+    """
+    count(.md produced) + count(note-level rows in errors CSV) == source_count.
+
+    Constitution rule 2: every note must produce either a .md or an explicit
+    error row. No silent loss allowed.
+    """
+    vault = migrated_vault["vault"]
+    errors_csv = migrated_vault["errors_csv"]
+    source_count = migrated_vault["source_count"]
+
+    md_count = len(list(vault.rglob("*.md")))
+
+    with errors_csv.open(encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        note_error_count = sum(1 for row in reader if row["level"] == "note")
+
+    total = md_count + note_error_count
+    assert total == source_count, (
+        f"Conservation invariant failed: "
+        f"{md_count} .md files + {note_error_count} note-level CSV errors = {total}, "
+        f"expected source_count={source_count}. "
+        f"Silent loss detected: {source_count - total} note(s) unaccounted for."
+    )
