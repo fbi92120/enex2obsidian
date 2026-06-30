@@ -1,9 +1,9 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.5
-**Date** : 2026-06-29
+**Version** : 1.6
+**Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : Étape 7/14 validée (notebook_selector) — étape 8/14 à démarrer (reporter)
+**Statut** : Étape 7/14 validée, vérification documentaire ENEX intégrée (SPECS V1.7) — étape 8/14 à démarrer (reporter)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
@@ -101,6 +101,24 @@ Le test empirique sur fichier réel (étape 3 de la validation) doit utiliser un
 Si le test empirique fait apparaître des comportements inattendus (volumes anormaux, patterns non prévus dans SPECS.md), traiter comme un signal de spec manquante — pas comme un succès du module testé.
 
 Leçon extraite de l'étape 6 (attachment_handler V1) : cyber.enex (knowledge) a passé les tests avec 114 PJ traitées, ce qui aurait été catastrophique en migration admin réelle (ressources web parasites). Amendement SPECS.md V1.6 introduit suite à cette découverte.
+
+**Consultation documentaire des formats sources — étape de cadrage**
+
+Pour tout projet qui consomme ou produit un format externe documenté (XML, JSON-Schema, protocole binaire, DTD), la consultation de la documentation officielle du format est une étape de cadrage **avant écriture des specs**, pas une vérification post-implémentation.
+
+Ce qui doit être consulté :
+- Documentation officielle de l'éditeur du format (le cas échéant)
+- Schémas formels (DTD, XSD, JSON Schema, etc.)
+- Au moins une analyse tierce indépendante (projets open source de migration, par exemple)
+
+Ce qui doit être produit :
+- Diff explicite entre les champs du format et le scope du projet
+- Pour chaque champ hors scope : décision documentée (reporté à version ultérieure, jugé sans pertinence, etc.)
+- Aucun champ ne doit être ignoré par défaut sans décision tracée
+
+Leçon extraite du projet enex2obsidian : la consultation documentaire a été faite à mi-parcours (entre étapes 7 et 8 sur 14), pas en cadrage. Conséquence : V1.5 (huge_tree=True) et V1.6 (MIME allowlist) sont des amendements correctifs post-commit. L'amendement V1.7 documente le diff exhaustif et tranche le scope V2.
+
+Pour les prochains projets : intégrer cette étape **avant la rédaction de SPECS.md V1.0**, pas après.
 
 ## Carnet de référence pour les tests
 

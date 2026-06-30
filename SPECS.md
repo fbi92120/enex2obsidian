@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.6
-**Date** : 2026-06-29
+**Version** : 1.7
+**Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : V1.6 — Filtrage des pièces jointes par allowlist MIME (découverte empirique cyber.enex)
+**Statut** : V1.7 — Documentation des champs ENEX hors scope V1 (vérification documentaire à mi-parcours)
 **Repo** : à créer
 
 ---
@@ -65,6 +65,50 @@ Conçu pour un usage personnel ponctuel — migration unique d'un corpus d'envir
 - API Evernote (export manuel uniquement, pas de token développeur, pas de réseau)
 - Interface graphique ou web
 - Restauration d'une migration antérieure ou rollback automatique
+
+
+#### Champs ENEX identifiés et reportés V2
+
+Une vérification documentaire à mi-parcours (entre étapes 7 et 8) a identifié des champs du format ENEX présents dans la DTD `enml2.dtd` et la documentation Evernote, mais non implémentés en V1. Le report en V2 est une décision consciente, non un oubli :
+
+**Champs de `<note-attributes>` reportés V2 :**
+
+| Champ | Usage Evernote | Justification du report |
+|---|---|---|
+| `subject-date` | Date "sujet" distincte de `created`/`updated` (ex. date d'une facture vs date d'ajout) | Pas d'usage admin avéré chez l'utilisateur en V1 |
+| `author` | Auteur de la note | Pas d'usage admin avéré |
+| `source` | Origine logique (`web.clip`, `desktop.mac`, etc.) | Information de contexte non critique en V1 |
+| `source-application` | Application d'origine | Idem |
+| `source-type` | Type de source | Idem |
+| `latitude` / `longitude` / `altitude` | Géolocalisation de la note | Sans pertinence pour usage admin |
+| `place-name` | Nom de lieu | Idem |
+| `reminder-order` / `reminder-time` / `reminder-done-time` / `reminder-time-zone` | Système de rappels/tâches Evernote | Pas d'usage admin avéré (utilisateur ne gère pas ses échéances admin via Evernote) |
+
+**Champs de `<resource-attributes>` reportés V2 :**
+
+| Champ | Usage Evernote | Justification du report |
+|---|---|---|
+| `attachment` (flag boolean) | Indique vraie pièce jointe vs inline | Sans impact sur la migration — toutes les pièces jointes sont traitées de la même manière |
+| `timestamp` | Date associée à la ressource (souvent EXIF) | Non critique pour usage admin |
+| `latitude` / `longitude` / `altitude` | Géolocalisation de la pièce jointe | Sans pertinence |
+
+**Champs de `<resource>` reportés V2 :**
+
+| Champ | Usage Evernote | Justification du report |
+|---|---|---|
+| `width` / `height` | Dimensions d'image | Le rendu Obsidian via `![[image]]` ne requiert pas ces dimensions ; à reconsidérer si V2 a un besoin de rendu fidèle |
+| `duration` | Durée audio/vidéo | Hors scope V1 (audio rare en admin) |
+| `recognition` | Données OCR Evernote | Obsidian utilise ses propres mécanismes d'indexation (plugins type Omnisearch) |
+| `alternate-data` | Variante du binaire | Cas marginal, pas d'usage avéré |
+
+**À reconsidérer pour V2 (carnets connaissance, ~6500 notes) :**
+
+- `source-url` est **déjà couvert en V1** (`metadata_extractor.NoteMetadata.source_url`, extrait depuis `note-attributes/source-url`). Vérifié explicitement à l'amendement V1.7.
+- `author` pourrait gagner en pertinence sur les carnets de connaissance (articles d'auteurs identifiés).
+- `subject-date` pourrait devenir critique si les notes de connaissance contiennent des références bibliographiques.
+- `recognition` (OCR) pourrait être utile pour la recherche dans les vieux scans, mais probablement remplacé par les plugins Obsidian.
+
+Cette liste est exhaustive au regard de la vérification documentaire menée. Tout champ découvert ultérieurement sera traité comme un signal de spec manquante (signal 🚨), pas comme une omission silencieuse.
 
 ### Évolutions prévues
 
@@ -747,4 +791,5 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 *Amendement V1.4 : corrections post-audit du module enex_parser — protection XXE (resolve_entities=False, no_network=True), hash RawAttachment toujours None, tolérance par note via try/except, distinction balise absente (None) vs vide ("").*
 *Amendement V1.5 : huge_tree=True pour autoriser les pièces jointes Evernote en base64. Détecté en test empirique post-commit (cyber.enex 91 Mo, 0 notes extraites avec huge_tree=False).*
 *Amendement V1.6 : filtrage des pièces jointes par allowlist MIME. Découvert sur cyber.enex (114 PJ dont 86% ressources annexes de captures web). Allowlist par défaut couvre les documents bureautiques, images sans formats web (JPEG/PNG/HEIC/TIFF, **pas** SVG/WebP/GIF), email, archives, audio. Configurable dans `config.yml`.*
+*Amendement V1.7 : vérification documentaire à mi-parcours (entre étapes 7 et 8). Identification explicite des champs ENEX hors scope V1, reportés V2. Décision motivée par l'usage réel de l'utilisateur (pas de rappels, pas de géoloc, pas de référencement par auteur en admin). source-url confirmé comme couvert en V1.*
 *Document à consommer directement par Claude Code après validation humaine.*
