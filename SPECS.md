@@ -287,7 +287,7 @@ Phase 1 — Initialisation
 3.  Validation existence et accessibilité de source_directory, vault_path, log_directory
 4.  Création du dossier log_directory si absent
 5.  Création du fichier log d'exécution : migration-YYYY-MM-DD-HHMM.log
-6.  Création des fichiers rapports : collisions-YYYY-MM-DD-HHMM.csv et erreurs-YYYY-MM-DD-HHMM.csv
+6.  Création des fichiers rapports : collisions-YYYY-MM-DD-HHMM.csv et errors-YYYY-MM-DD-HHMM.csv
 
 Phase 2 — Sélection des carnets
 7.  Lecture du fichier carnets-a-migrer.txt (ou flag --carnet)
@@ -364,7 +364,7 @@ Le vault ne contient aucun fichier de log ni de rapport. Le matériel de migrati
 ├── logs/
 │   ├── migration-2026-06-29-1430.log             ← log d'exécution
 │   ├── collisions-2026-06-29-1430.csv            ← rapport collisions
-│   └── erreurs-2026-06-29-1430.csv               ← rapport erreurs
+│   └── errors-2026-06-29-1430.csv               ← rapport erreurs
 ├── carnets-a-migrer.txt                          ← liste des carnets à traiter
 └── config.yml                                    ← config locale
 ```
@@ -562,7 +562,7 @@ Avant toute écriture de fichier :
 [2026-06-29 14:45:30] Carnets : 3/3 traités
 [2026-06-29 14:45:30] Notes : 156 en entrée, 151 succès, 3 erreurs partielles, 2 erreurs totales
 [2026-06-29 14:45:30] Pièces jointes : 287 copiées, 5 collisions, 1 ignorée
-[2026-06-29 14:45:30] Voir : collisions-2026-06-29-1430.csv, erreurs-2026-06-29-1430.csv
+[2026-06-29 14:45:30] Voir : collisions-2026-06-29-1430.csv, errors-2026-06-29-1430.csv
 ```
 
 **Rapport collisions** : `collisions-YYYY-MM-DD-HHMM.csv`
@@ -576,7 +576,7 @@ timestamp,carnet,note_titre,note_guid,type,nom_original,nom_final,note
 
 Colonne `type` : `attachment` ou `md`. Colonne `note` : libre, pour annotations supplémentaires (`sanitized` si le nom a été modifié pour raison sécurité).
 
-**Rapport erreurs** : `erreurs-YYYY-MM-DD-HHMM.csv`
+**Rapport erreurs** : `errors-YYYY-MM-DD-HHMM.csv`
 
 ```csv
 timestamp,carnet,note_titre,note_guid,niveau,cause,detail

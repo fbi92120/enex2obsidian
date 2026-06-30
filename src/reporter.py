@@ -54,6 +54,31 @@ _COLLISIONS_HEADER = ["timestamp", "kind", "original_name", "final_name",
                       "notebook", "note_guid"]
 
 
+def _sanitize_field(value: str | None) -> str:
+    """Supprime les NULL bytes (\\x00) susceptibles de casser CSV et certains éditeurs."""
+    if value is None:
+        return ""
+    return value.replace("\x00", "")
+
+
+def _resolve_paths(log_dir: Path, ts: str) -> tuple[Path, Path, Path]:
+    """Retourne un triplet (log, errors, collisions) dont aucun fichier n'existe.
+
+    Si le triplet au timestamp brut existe déjà (au moins un des 3), ajoute
+    un suffixe numérique croissant : -1, -2, ... jusqu'à trouver un triplet
+    entièrement libre.
+    """
+    counter = 0
+    while True:
+        suffix = f"-{counter}" if counter > 0 else ""
+        log_path = log_dir / f"migration-{ts}{suffix}.log"
+        errors_path = log_dir / f"errors-{ts}{suffix}.csv"
+        coll_path = log_dir / f"collisions-{ts}{suffix}.csv"
+        if not log_path.exists() and not errors_path.exists() and not coll_path.exists():
+            return log_path, errors_path, coll_path
+        counter += 1
+
+
 class Reporter:
     """Collecte et persiste les logs et reports d'une exécution de migration.
 
@@ -63,10 +88,24 @@ class Reporter:
       collisions-YYYYMMDD-HHMMSS.csv
       errors-YYYYMMDD-HHMMSS.csv
 
+    Si deux instances sont créées dans la même seconde, la seconde utilise
+    un suffixe numérique : migration-YYYYMMDD-HHMMSS-1.log, etc.
+
     Usage typique :
         with Reporter(log_dir=Path("logs")) as reporter:
             reporter.log(LogLevel.INFO, "Démarrage migration")
             reporter.record_error(level=ErrorLevel.ATTACHMENT, cause="mime_excluded", ...)
+
+    Limitations connues (V1) :
+    - Écriture séquentielle CSV puis log : divergence possible en cas de panne
+      mid-method (CSV écrit mais ligne log absente, ou inverse). Acceptable V1.
+    - Pas de fsync : flush() garantit la sortie du buffer Python, mais l'écriture
+      disque physique peut être différée par le système. Acceptable V1 (impact
+      uniquement en cas de crash matériel).
+    - Erreurs disque non encapsulées : laissées remonter à l'appelant (constitution
+      règle 2 — aucune perte silencieuse, le batch s'arrête sur erreur disque grave).
+    - Usage après close() : lèvera une exception Python native (fichier fermé).
+      Pas de message custom.
     """
 
     def __init__(self, log_dir: Path) -> None:
@@ -76,40 +115,53 @@ class Reporter:
 
         Les 3 fichiers sont ouverts en mode append à l'instanciation.
         Le timestamp de démarrage est fixé ici (YYYYMMDD-HHMMSS).
-        Les CSV ont leur ligne d'en-tête écrite à l'ouverture.
+        En cas de collision de noms (même seconde), un suffixe -1, -2... est ajouté.
+        Les CSV ont leur ligne d'en-tête écrite uniquement si le fichier est nouveau.
         """
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
-        self._startup_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        log_path, errors_path, coll_path = _resolve_paths(self._log_dir, ts)
+
         self._closed = False
+        opened_handles: list = []
+        try:
+            self._log_fh = log_path.open("a", encoding="utf-8")
+            opened_handles.append(self._log_fh)
 
-        # Log texte
-        log_path = self._log_dir / f"migration-{self._startup_ts}.log"
-        self._log_fh = log_path.open("a", encoding="utf-8")
+            errors_existed = errors_path.exists()
+            self._errors_fh = errors_path.open("a", encoding="utf-8", newline="")
+            opened_handles.append(self._errors_fh)
+            self._errors_writer = csv.writer(self._errors_fh, quoting=csv.QUOTE_MINIMAL)
+            if not errors_existed:
+                self._errors_writer.writerow(_ERRORS_HEADER)
+                self._errors_fh.flush()
 
-        # errors.csv
-        errors_path = self._log_dir / f"errors-{self._startup_ts}.csv"
-        self._errors_fh = errors_path.open("a", encoding="utf-8", newline="")
-        self._errors_writer = csv.writer(self._errors_fh, quoting=csv.QUOTE_MINIMAL)
-        self._errors_writer.writerow(_ERRORS_HEADER)
-        self._errors_fh.flush()
+            coll_existed = coll_path.exists()
+            self._coll_fh = coll_path.open("a", encoding="utf-8", newline="")
+            opened_handles.append(self._coll_fh)
+            self._coll_writer = csv.writer(self._coll_fh, quoting=csv.QUOTE_MINIMAL)
+            if not coll_existed:
+                self._coll_writer.writerow(_COLLISIONS_HEADER)
+                self._coll_fh.flush()
 
-        # collisions.csv
-        coll_path = self._log_dir / f"collisions-{self._startup_ts}.csv"
-        self._coll_fh = coll_path.open("a", encoding="utf-8", newline="")
-        self._coll_writer = csv.writer(self._coll_fh, quoting=csv.QUOTE_MINIMAL)
-        self._coll_writer.writerow(_COLLISIONS_HEADER)
-        self._coll_fh.flush()
+        except Exception:
+            for fh in opened_handles:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+            raise
 
     def log(self, level: LogLevel, message: str) -> None:
         """Écrit une ligne timestampée dans le log texte.
 
         Format : YYYY-MM-DDTHH:MM:SS [LEVEL] message
-        Flush immédiat.
+        Flush immédiat. NULL bytes supprimés.
         """
         ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-        self._log_fh.write(f"{ts} [{level.value}] {message}\n")
+        self._log_fh.write(f"{ts} [{level.value}] {_sanitize_field(message)}\n")
         self._log_fh.flush()
 
     def record_error(
@@ -125,30 +177,30 @@ class Reporter:
         """Écrit une ligne dans errors.csv et une ligne ERROR dans le log texte.
 
         Les champs None sont écrits comme chaîne vide dans le CSV.
+        NULL bytes supprimés dans tous les champs.
         Flush immédiat sur les deux fichiers.
         """
         ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         self._errors_writer.writerow([
             ts,
             level.value,
-            cause,
-            detail,
-            notebook or "",
-            note_guid or "",
-            note_title or "",
-            attachment_filename or "",
+            _sanitize_field(cause),
+            _sanitize_field(detail),
+            _sanitize_field(notebook),
+            _sanitize_field(note_guid),
+            _sanitize_field(note_title),
+            _sanitize_field(attachment_filename),
         ])
         self._errors_fh.flush()
 
-        # Résumé dans le log texte
         context = ""
         if notebook:
-            context += f" notebook='{notebook}'"
+            context += f" notebook='{_sanitize_field(notebook)}'"
         if note_guid:
-            context += f" guid={note_guid}"
+            context += f" guid={_sanitize_field(note_guid)}"
         if attachment_filename:
-            context += f" file='{attachment_filename}'"
-        self.log(LogLevel.ERROR, f"{cause}{context} — {detail}")
+            context += f" file='{_sanitize_field(attachment_filename)}'"
+        self.log(LogLevel.ERROR, f"{_sanitize_field(cause)}{context} — {_sanitize_field(detail)}")
 
     def record_collision(
         self,
@@ -160,32 +212,42 @@ class Reporter:
     ) -> None:
         """Écrit une ligne dans collisions.csv et une ligne INFO dans le log texte.
 
-        Flush immédiat.
+        NULL bytes supprimés dans tous les champs. Flush immédiat.
         """
         ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         self._coll_writer.writerow([
             ts,
             kind.value,
-            original_name,
-            final_name,
-            notebook,
-            note_guid or "",
+            _sanitize_field(original_name),
+            _sanitize_field(final_name),
+            _sanitize_field(notebook),
+            _sanitize_field(note_guid),
         ])
         self._coll_fh.flush()
 
         self.log(
             LogLevel.INFO,
-            f"Collision {kind.value} : '{original_name}' → '{final_name}' dans '{notebook}'",
+            f"Collision {kind.value} : '{_sanitize_field(original_name)}' → "
+            f"'{_sanitize_field(final_name)}' dans '{_sanitize_field(notebook)}'",
         )
 
     def close(self) -> None:
-        """Ferme proprement les 3 handles de fichier. Idempotent."""
+        """Ferme proprement les 3 handles de fichier.
+
+        Idempotent. Ferme les 3 indépendamment : si l'un lève, les autres
+        sont quand même fermés. La première exception est re-raised à la fin.
+        """
         if self._closed:
             return
         self._closed = True
-        self._log_fh.close()
-        self._errors_fh.close()
-        self._coll_fh.close()
+        errors: list[Exception] = []
+        for fh in [self._log_fh, self._errors_fh, self._coll_fh]:
+            try:
+                fh.close()
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     def __enter__(self) -> "Reporter":
         return self

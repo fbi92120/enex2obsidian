@@ -1094,3 +1094,89 @@ def test_reporter_two_instances_distinct_files(tmp_path):
     r2.close()
     log_files = list(tmp_path.glob("migration-*.log"))
     assert len(log_files) == 2
+
+
+def test_reporter_no_collision_same_second(tmp_path):
+    """Deux Reporter instanciés dans la même seconde produisent des fichiers distincts (sans sleep)."""
+    from src.reporter import Reporter
+    r1 = Reporter(log_dir=tmp_path)
+    r2 = Reporter(log_dir=tmp_path)
+    r1.close()
+    r2.close()
+    log_files = list(tmp_path.glob("migration-*.log"))
+    assert len(log_files) == 2
+
+
+def test_reporter_no_duplicate_header_if_file_exists(tmp_path):
+    """Si les fichiers existent déjà, pas de duplication d'en-tête à la réouverture."""
+    from src.reporter import Reporter
+    fake_log = tmp_path / "migration-20260629-201530.log"
+    fake_errors = tmp_path / "errors-20260629-201530.csv"
+    fake_coll = tmp_path / "collisions-20260629-201530.csv"
+    fake_log.write_text("ligne préexistante\n", encoding="utf-8")
+    fake_errors.write_text("timestamp,level,cause\nfake,fake,fake\n", encoding="utf-8")
+    fake_coll.write_text("timestamp,kind\nfake,fake\n", encoding="utf-8")
+    r = Reporter(log_dir=tmp_path)
+    r.close()
+    all_files = list(tmp_path.glob("*"))
+    assert len(all_files) >= 4
+
+
+def test_reporter_init_partial_failure_closes_handles(tmp_path, monkeypatch):
+    """Si l'ouverture d'un fichier échoue, les handles déjà ouverts sont fermés."""
+    from pathlib import Path
+    from src.reporter import Reporter
+    original_open = Path.open
+    call_count = [0]
+
+    def failing_open(self, *args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 3:
+            raise OSError("Simulated disk error")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", failing_open)
+
+    with pytest.raises(OSError):
+        Reporter(log_dir=tmp_path)
+
+
+def test_reporter_null_byte_stripped(tmp_path):
+    """Les NULL bytes (\\x00) sont supprimés des champs CSV et log."""
+    import csv as csv_mod
+    from src.reporter import Reporter, ErrorLevel, LogLevel
+    reporter = Reporter(log_dir=tmp_path)
+    reporter.record_error(
+        level=ErrorLevel.NOTE,
+        cause="parse_error",
+        detail="contenu avec \x00 NULL byte",
+        notebook="Carnet\x00normal",
+        note_title="Titre\x00bizarre",
+    )
+    reporter.log(LogLevel.INFO, "log avec \x00 NULL")
+    reporter.close()
+    errors_file = next(tmp_path.glob("errors-*.csv"))
+    errors_content = errors_file.read_text(encoding="utf-8")
+    assert "\x00" not in errors_content
+    log_file = next(tmp_path.glob("migration-*.log"))
+    log_content = log_file.read_text(encoding="utf-8")
+    assert "\x00" not in log_content
+
+
+def test_reporter_close_robust_to_partial_failure(tmp_path):
+    """close() ferme tous les handles même si l'un d'eux lève une exception."""
+    from src.reporter import Reporter
+    reporter = Reporter(log_dir=tmp_path)
+
+    original_close = reporter._log_fh.close
+
+    def failing_close():
+        raise OSError("Simulated close error")
+
+    reporter._log_fh.close = failing_close
+
+    with pytest.raises(OSError):
+        reporter.close()
+
+    assert reporter._errors_fh.closed
+    assert reporter._coll_fh.closed
