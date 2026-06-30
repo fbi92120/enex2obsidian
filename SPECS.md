@@ -1,9 +1,9 @@
 # SPECS.md — Migration Evernote → Obsidian (carnets admin)
 
-**Version** : 1.7
+**Version** : 1.8
 **Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : V1.7 — Documentation des champs ENEX hors scope V1 (vérification documentaire à mi-parcours)
+**Statut** : V1.8 — Normalisation NFC obligatoire + format embed pour PDFs (bug bloquant découvert en inspection Obsidian)
 **Repo** : à créer
 
 ---
@@ -21,6 +21,7 @@
 7. **Pas de LLM dans le pipeline** — la transformation est purement déterministe. Aucune décision runtime ne fait appel à un modèle de langage.
 8. **Pas d'écrasement implicite** — un `.md` cible déjà existant entraîne un skip avec log. L'écrasement nécessite le flag `--force` explicite.
 9. **Pas de path traversal** — toute écriture est vérifiée comme étant strictement sous le vault cible. Un nom de pièce jointe contenant `..` ou des séparateurs ne peut sortir du dossier de destination.
+10. **Normalisation NFC obligatoire** — tous les noms de fichiers écrits dans le vault Obsidian (pièces jointes, fichiers `.md`) et tous les liens générés vers ces fichiers sont normalisés en Unicode NFC avant écriture. Les noms en NFD (forme décomposée) sont systématiquement convertis en NFC (forme composée) à 3 points du pipeline : `filename_normalizer.sanitize_attachment_name`, `attachment_handler._resolve_filename`, et `writer._resolve_placeholders`. Cette défense en profondeur garantit la résolution correcte des liens dans Obsidian qui normalise ses recherches en NFC.
 
 ---
 
@@ -313,7 +314,8 @@ Pour chaque carnet sélectionné :
        - Écriture dans [vault]/[carnet]/attachments/
        - Mémorisation de la correspondance hash <en-media> → nom final
     d. Substitution des balises <en-media> dans le Markdown
-       - Image (.png, .jpg, .jpeg, .gif, .webp) → embed Obsidian ![[nom.ext]]
+       - Image (.png, .jpg, .jpeg, .gif, .webp, .heic, .heif, .tiff) → embed Obsidian ![[attachments/nom.ext]]
+       - PDF (.pdf) → embed Obsidian ![[attachments/nom.pdf]]
        - Autre → lien simple [nom.ext](attachments/nom.ext)
     e. Construction du frontmatter YAML
     f. Construction du chemin cible : [vault]/[carnet]/[slug-titre].md
@@ -426,8 +428,33 @@ Aplati ou ignoré :
 - Balises HTML inconnues (contenu textuel préservé, balise enlevée)
 
 Pièces jointes : la balise `<en-media hash="...">` est remplacée par :
-- Pour les images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) : `![[nom-fichier.ext]]` (embed Obsidian)
-- Pour les autres types : `[nom-fichier.ext](attachments/nom-fichier.ext)` (lien simple)
+- Pour les images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.heic`, `.heif`, `.tiff`) : `![[attachments/nom-fichier.ext]]` (embed Obsidian, chemin relatif explicite pour résolution déterministe)
+- Pour les PDFs (`.pdf`) : `![[attachments/nom-fichier.pdf]]` (embed Obsidian, affichage inline du visualiseur PDF)
+- Pour les autres types (docx, xlsx, zip, audio, etc.) : `[nom-fichier.ext](attachments/nom-fichier.ext)` (lien Markdown classique, ouvre l'application système au clic)
+
+**Important — normalisation NFC** : le nom de fichier utilisé dans le wikilink ou le lien est systématiquement normalisé en Unicode NFC avant inclusion. Cela garantit la résolution correcte par Obsidian qui compare les noms en NFC.
+
+**Important — chemin relatif dans les embeds** : le chemin `attachments/` est inclus dans le wikilink (forme `![[attachments/fichier.pdf]]`) plutôt que de compter sur l'index global d'Obsidian (forme `![[fichier.pdf]]`). C'est plus déterministe en cas de doublons de noms entre carnets.
+
+### Normalisation Unicode
+
+Tous les noms de fichiers écrits dans le vault Obsidian (pièces jointes dans `attachments/` et fichiers `.md` à la racine du carnet) sont normalisés en Unicode NFC (Normalization Form C — Canonical Composition) avant écriture.
+
+**Pourquoi** : macOS APFS stocke les noms de fichiers en NFD (forme décomposée : `e` + accent combinant), mais Obsidian normalise ses recherches en NFC (forme composée : `é` comme un seul codepoint). Sans normalisation explicite, les fichiers écrits en NFD depuis l'ENEX deviennent introuvables par Obsidian quand un lien les référence.
+
+**Points de normalisation** (défense en profondeur, 3 niveaux) :
+
+1. **`filename_normalizer.sanitize_attachment_name`** — normalisation NFC du nom de pièce jointe à la sortie de la sanitization. Tout le pipeline aval reçoit du NFC.
+
+2. **`attachment_handler._resolve_filename`** — normalisation NFC en sortie, même sur le fallback `attachment-{hash[:8]}.{ext}`. Couvre le cas où le sanitizer aurait été contourné.
+
+3. **`writer._resolve_placeholders`** — normalisation NFC sur le `final_filename` reçu de l'`AttachmentResult` avant utilisation dans le lien généré. Couvre le cas d'un `AttachmentResult` venu d'un test ou d'un état sérialisé non normalisé.
+
+4. **`writer` (slug `.md`)** — normalisation NFC sur le slug du nom de fichier `.md` produit par `slug_for_note`. `python-slugify` produit habituellement du NFC mais ce n'est pas garanti par contrat.
+
+**Comparaison stricte des collisions** : la gestion des collisions intra-session (`_written_filenames`) compare les noms après normalisation NFC. Deux noms NFC et NFD du même contenu sont considérés comme identiques.
+
+**Pas de normalisation côté `enex_parser`** : ce module reste le point de lecture brut de l'ENEX. La normalisation est une règle de sortie filesystem, pas de parsing.
 
 ### Gestion des collisions
 
@@ -622,8 +649,8 @@ Les tests de contrat (CT-XX) restent indépendants de cette fixture et s'exécut
 | CT-08 | Conversion XHTML basique en MD | Balises `<p>`, `<ul>`, `<li>`, `<strong>` correctement converties |
 | CT-09 | Conversion `<en-todo>` non cochée | `- [ ]` |
 | CT-10 | Conversion `<en-todo>` cochée | `- [x]` |
-| CT-11 | Image embarquée → embed Obsidian | `![[image.png]]` |
-| CT-12 | PDF embarqué → lien simple | `[document.pdf](attachments/document.pdf)` |
+| CT-11 | Image embarquée → embed Obsidian | `![[attachments/image.png]]` |
+| CT-12 | PDF embarqué → embed Obsidian | `![[attachments/document.pdf]]` |
 | CT-13 | Collision de pièce jointe (2 fois "scan.pdf") | "scan.pdf" puis "scan-2.pdf" |
 | CT-14 | Collision de `.md` (2 notes "Facture") | "Facture.md" puis "Facture-2.md" |
 | CT-15 | Pièce jointe avec nom "../etc/passwd" | Sanitisé en "etc-passwd" ou similaire, log dans collisions.csv avec note "sanitized" |
@@ -631,6 +658,10 @@ Les tests de contrat (CT-XX) restent indépendants de cette fixture et s'exécut
 | CT-16b | Pièce jointe avec MIME hors allowlist (image/svg+xml) | Non copiée, log erreur cause `mime_excluded`, aucune mention dans le `.md` |
 | CT-17 | Note sans titre | Slug `note-[8-chars-guid].md`, frontmatter `title: ""` |
 | CT-18 | Tag vide après normalisation | Tag ignoré, pas d'entrée vide dans `tags:` |
+| CT-19 | Pièce jointe avec nom en NFD (`nucléaire.pdf`) | `final_filename` en NFC (`nucléaire.pdf`), `unicodedata.is_normalized("NFC", result)` == True |
+| CT-20 | Lien généré pour PDF accentué (`nucléaire.pdf`) | URL-encoding produit `%C3%A9` et `%C3%A7`, pas `%CC%81` ni `%CC%A7` |
+| CT-21 | Embed wikilink pour PDF | Lien généré au format `![[attachments/fichier.pdf]]`, pas `[fichier.pdf](attachments/fichier.pdf)` |
+| CT-22 | Lien Markdown classique pour docx | Lien au format `[fichier.docx](attachments/fichier.docx)`, pas d'embed |
 
 ### Test de smoke (intégration)
 
@@ -754,7 +785,7 @@ Montant : **127,45 €**
 
 - [ ] Payer avant le 30 mars
 
-[Facture EDF mars 2024.pdf](attachments/Facture%20EDF%20mars%202024.pdf)
+![[attachments/Facture EDF mars 2024.pdf]]
 ```
 
 Pièce jointe copiée : `Vault-Admin/Comptabilite-2024/attachments/Facture EDF mars 2024.pdf`
@@ -792,4 +823,5 @@ Ne jamais paralléliser. Ne jamais passer à l'étape N+1 sans validation de l'�
 *Amendement V1.5 : huge_tree=True pour autoriser les pièces jointes Evernote en base64. Détecté en test empirique post-commit (cyber.enex 91 Mo, 0 notes extraites avec huge_tree=False).*
 *Amendement V1.6 : filtrage des pièces jointes par allowlist MIME. Découvert sur cyber.enex (114 PJ dont 86% ressources annexes de captures web). Allowlist par défaut couvre les documents bureautiques, images sans formats web (JPEG/PNG/HEIC/TIFF, **pas** SVG/WebP/GIF), email, archives, audio. Configurable dans `config.yml`.*
 *Amendement V1.7 : vérification documentaire à mi-parcours (entre étapes 7 et 8). Identification explicite des champs ENEX hors scope V1, reportés V2. Décision motivée par l'usage réel de l'utilisateur (pas de rappels, pas de géoloc, pas de référencement par auteur en admin). source-url confirmé comme couvert en V1.*
+*Amendement V1.8 : bug fonctionnel découvert en inspection visuelle Obsidian (post-étape 11). Liens vers PDFs avec accents cassés à cause de l'absence de normalisation NFC. Correction en 3 points (sanitize_attachment_name, _resolve_filename, _resolve_placeholders) + extension du format embed wikilink aux PDFs (en plus des images). CT-11 et CT-12 mis à jour. CT-19 à CT-22 ajoutés. Confirmé par audit Codex.*
 *Document à consommer directement par Claude Code après validation humaine.*

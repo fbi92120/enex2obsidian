@@ -1,9 +1,9 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.6
+**Version** : 1.7
 **Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : Étape 11/14 validée (orchestrateur) — étape 12/14 à démarrer (test smoke)
+**Statut** : Étape 11/14 amendée (SPECS V1.8, NFC + embed PDF) — étape 12/14 à démarrer (test smoke)
 **Repo** : à créer
 
 Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
@@ -119,6 +119,30 @@ Ce qui doit être produit :
 Leçon extraite du projet enex2obsidian : la consultation documentaire a été faite à mi-parcours (entre étapes 7 et 8 sur 14), pas en cadrage. Conséquence : V1.5 (huge_tree=True) et V1.6 (MIME allowlist) sont des amendements correctifs post-commit. L'amendement V1.7 documente le diff exhaustif et tranche le scope V2.
 
 Pour les prochains projets : intégrer cette étape **avant la rédaction de SPECS.md V1.0**, pas après.
+
+**Modules concernés par l'inspection visuelle V1** : `writer` (sortie .md vers Obsidian).
+
+Checklist d'inspection visuelle Obsidian pour ce projet :
+1. Ouvrir le vault produit dans Obsidian
+2. Inspecter 5-10 notes au hasard (frontmatter rendu correctement, contenu Markdown lisible)
+3. Cliquer sur **au moins 3 liens vers pièces jointes**, dont au moins 1 avec un nom accentué
+4. Vérifier l'affichage des embeds (images, PDFs) en mode lecture
+5. Vérifier la présence des tags dans la palette de tags Obsidian
+6. Vérifier qu'aucun fichier vide "X.pdf 1", "X.pdf 2" n'apparaît dans la sidebar attachments (signal de lien cassé)
+
+**Inspection visuelle pré-commit pour les outputs visuellement consommés**
+
+Pour tout projet dont l'output est consommé visuellement par un humain dans un outil cible (Obsidian, Word, browser, etc.), l'inspection visuelle dans cet outil est une étape de validation obligatoire — pas un nice-to-have post-livraison.
+
+**Règle** : aucun module qui produit un fichier destiné à être ouvert dans un outil externe n'est considéré comme validé tant qu'un échantillon de sa sortie n'a pas été ouvert dans cet outil et inspecté visuellement.
+
+**Pourquoi** : les tests automatisés et les tests empiriques sur fichiers de référence vérifient la structure et la complétude des outputs, mais ne révèlent pas les bugs de rendu propres à l'outil cible. Un fichier `.md` peut être structurellement parfait, passer tous les tests, mais avoir un comportement cassé dans Obsidian (résolution de liens, encodage, format d'embed).
+
+**Couverture des accents** : l'échantillon inspecté doit contenir des caractères Unicode non-ASCII (accents français, caractères composés). Les bugs de normalisation Unicode (NFC/NFD) sont systématiquement masqués par un échantillon purement ASCII et ne ressortent que sur du contenu accentué.
+
+**Leçon extraite de l'étape 11** : `cyber.enex` a été migré, le test empirique a passé (23 notes → 23 `.md`, 113 pièces jointes copiées), mais l'inspection visuelle dans Obsidian a révélé que les liens vers les ~5 PDFs au nom accentué étaient cassés (création de fichiers vides au clic). Amendement V1.8 introduit suite à cette découverte.
+
+Pour les prochains projets : prévoir cette étape **avant** de considérer une étape comme validée et commitée, pas après.
 
 ## Carnet de référence pour les tests
 
