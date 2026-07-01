@@ -1,12 +1,12 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.7
+**Version** : 1.8
 **Date** : 2026-06-30
 **Auteur** : François Biller
-**Statut** : Étape 11/14 amendée (SPECS V1.8, NFC + embed PDF) — étape 12/14 à démarrer (test smoke)
-**Repo** : à créer
+**Statut** : Étape 13/14 exécutée, PROMPT-13-FIX rédigé et en attente d'application (bugs Constitution règle 2 à corriger avant migration)
+**Repo** : enex2obsidian (local)
 
-Emplacement cible : `~/Projects/evernote-to-obsidian/CLAUDE.md`
+Emplacement cible : `~/Projects/enex2obsidian/CLAUDE.md`
 Portée : ce projet uniquement.
 
 Ce fichier complète les conventions transversales définies dans :
@@ -19,31 +19,29 @@ https://github.com/fbi92120/vibe-coding-governed
 
 Outil CLI Python qui convertit les fichiers `.enex` exportés depuis l'app Evernote macOS en notes Markdown organisées dans un vault Obsidian dédié aux notes administratives.
 
-Migration ponctuelle d'un corpus d'environ 1600 notes admin en V1, élargi à ~6500 notes connaissance en V2.
+Migration ponctuelle d'un corpus d'environ 1772 notes admin. **Scope définitif : V1 admin uniquement, pas de V2 connaissance prévue** — les carnets de connaissance ne seront pas migrés vers Obsidian.
 
-Repo    : à créer
-Specs   : SPECS.md V1.1 — lire avant toute implémentation
+Repo    : `~/Projects/enex2obsidian/` (local, non publié sur GitHub)
+Specs   : SPECS.md V1.8 — lire avant toute implémentation
+Contexte évolutif : CONTEXTE-PROJET.md V4.0 — état d'avancement, décisions, leçons
 Méthode : METHODE_SPECS_CO-CONSTRUCTION.md (projet vibe-coding-governed)
 Retour d'expérience hérité : YT_EXTRACTOR_RETOUR_EXPERIENCE.md
 
 ## État courant
 
-| Version | Date | Contenu |
-|---|---|---|
-| V1.0 SPECS | 2026-06-29 | Spécifications initiales co-construites dans Claude.ai |
-| V1.1 SPECS | 2026-06-29 | Stack XML actée (lxml), plafond pièce jointe 200 Mo, fixture test = carnet réel |
-
-Implémentation : non démarrée.
+Voir CONTEXTE-PROJET.md pour l'historique complet des versions SPECS et l'état d'avancement des étapes. Ce fichier CLAUDE.md décrit les règles opérationnelles stables du projet, pas son état.
 
 ## Stack technique
 
 ```
 Python 3.12 via .venv/ (venv local, PEP 668-compliant — voir setup.sh)
-lxml (mode recover=True)       # parsing XML ENEX tolérant
+lxml (mode recover=True, huge_tree=True, resolve_entities=False, no_network=True)
+                               # parsing XML ENEX tolérant + sécurisé
 markdownify                    # conversion XHTML → Markdown
 python-slugify                 # slug ASCII
 python-dateutil                # parsing dates ISO 8601
 pyyaml                         # config.yml + frontmatter YAML
+pytest                         # tests unitaires + intégration
 ```
 
 Aucune dépendance réseau. Aucun token, aucune clé API. Tout en local.
@@ -61,6 +59,7 @@ Ces règles ne peuvent jamais être violées, même si le résultat semble accep
 7. **Pas de LLM dans le pipeline** — transformation purement déterministe.
 8. **Pas d'écrasement implicite** — `.md` cible existant = skip + log. Écrasement uniquement via `--force`.
 9. **Pas de path traversal** — toute écriture vérifiée comme étant strictement sous `vault_path`.
+10. **NFC obligatoire** — tous les noms de fichiers et de dossiers produits par le pipeline sont normalisés en NFC à l'écriture, quelle que soit la forme du source ENEX.
 
 ## Comportements aux limites — décisions actées
 
@@ -70,7 +69,9 @@ Voir SPECS.md Bloc 4 pour le tableau complet. Décisions à garder en tête en p
 |---|---|
 | Note avec XHTML mal formé | Log + passage à la note suivante. Le carnet continue. |
 | `.enex` introuvable pour carnet listé | Log + passage au carnet suivant. Le batch continue. |
-| Pièce jointe > 200 Mo | Log + skip. Mention dans le `.md` à l'emplacement attendu. |
+| `--carnet "X"` avec X absent | Erreur terminal explicite (exit ≠ 0). Aucune migration. |
+| Pièce jointe > 200 Mo | Log + skip. Mention `[pièce jointe ignorée : taille > N Mo, voir log]` dans le `.md`. |
+| Pièce jointe avec base64 corrompu | Log + skip. Mention `[pièce jointe corrompue, voir log]` dans le `.md`. |
 | Collision pièce jointe | Suffixe `-2`, `-3`, ... + log CSV. Pas d'écrasement. |
 | Collision nom `.md` | Suffixe `-2`, `-3`, ... + log CSV. Pas d'écrasement. |
 | Note sans titre | Slug `note-[8-chars-guid].md`, `title: ""` dans frontmatter. |
@@ -120,16 +121,6 @@ Leçon extraite du projet enex2obsidian : la consultation documentaire a été f
 
 Pour les prochains projets : intégrer cette étape **avant la rédaction de SPECS.md V1.0**, pas après.
 
-**Modules concernés par l'inspection visuelle V1** : `writer` (sortie .md vers Obsidian).
-
-Checklist d'inspection visuelle Obsidian pour ce projet :
-1. Ouvrir le vault produit dans Obsidian
-2. Inspecter 5-10 notes au hasard (frontmatter rendu correctement, contenu Markdown lisible)
-3. Cliquer sur **au moins 3 liens vers pièces jointes**, dont au moins 1 avec un nom accentué
-4. Vérifier l'affichage des embeds (images, PDFs) en mode lecture
-5. Vérifier la présence des tags dans la palette de tags Obsidian
-6. Vérifier qu'aucun fichier vide "X.pdf 1", "X.pdf 2" n'apparaît dans la sidebar attachments (signal de lien cassé)
-
 **Inspection visuelle pré-commit pour les outputs visuellement consommés**
 
 Pour tout projet dont l'output est consommé visuellement par un humain dans un outil cible (Obsidian, Word, browser, etc.), l'inspection visuelle dans cet outil est une étape de validation obligatoire — pas un nice-to-have post-livraison.
@@ -140,24 +131,60 @@ Pour tout projet dont l'output est consommé visuellement par un humain dans un 
 
 **Couverture des accents** : l'échantillon inspecté doit contenir des caractères Unicode non-ASCII (accents français, caractères composés). Les bugs de normalisation Unicode (NFC/NFD) sont systématiquement masqués par un échantillon purement ASCII et ne ressortent que sur du contenu accentué.
 
+**Modules concernés par l'inspection visuelle V1** : `writer` (sortie .md vers Obsidian).
+
+Checklist d'inspection visuelle Obsidian pour ce projet :
+1. Ouvrir le vault produit dans Obsidian
+2. Inspecter 5-10 notes au hasard (frontmatter rendu correctement, contenu Markdown lisible)
+3. Cliquer sur **au moins 3 liens vers pièces jointes**, dont au moins 1 avec un nom accentué
+4. Vérifier l'affichage des embeds (images, PDFs) en mode lecture
+5. Vérifier la présence des tags dans la palette de tags Obsidian
+6. Vérifier qu'aucun fichier vide "X.pdf 1", "X.pdf 2" n'apparaît dans la sidebar attachments (signal de lien cassé)
+
 **Leçon extraite de l'étape 11** : `cyber.enex` a été migré, le test empirique a passé (23 notes → 23 `.md`, 113 pièces jointes copiées), mais l'inspection visuelle dans Obsidian a révélé que les liens vers les ~5 PDFs au nom accentué étaient cassés (création de fichiers vides au clic). Amendement V1.8 introduit suite à cette découverte.
 
 Pour les prochains projets : prévoir cette étape **avant** de considérer une étape comme validée et commitée, pas après.
 
+**Tests d'intégration révélant des violations Constitution**
+
+*Nouvelle règle V1.8 — leçon PROMPT-13.*
+
+Un test d'intégration (smoke, limits) qui révèle qu'un comportement du pipeline viole une règle de la Constitution (Bloc 0 des SPECS) doit être traité comme un **bloquant pré-migration**, pas comme une adaptation acceptable du test.
+
+Exemples de violations Constitution détectables par test :
+- Règle 2 (aucune perte silencieuse) : une note en erreur ne produit aucune ligne dans le CSV d'erreurs
+- Règle 5 (idempotence) : un 2e run produit un état différent du 1er
+- Règle 8 (pas d'écrasement implicite) : `.md` existant écrasé sans `--force`
+- Règle 9 (pas de path traversal) : un fichier est écrit en dehors de `vault_path`
+
+Un test qui découvre ce type de violation doit :
+1. Émettre 🚨 SPEC MANQUANTE (cf. section "Signal d'alarme" ci-dessous)
+2. Ne pas être commité tant que la violation n'est pas corrigée dans le code de production
+3. Sauf `pytest.xfail(strict=True)` explicite avec entrée BACKLOG.md sous "Importants — à traiter avant migration réelle"
+
+**Leçon PROMPT-13** : à l'étape 13, Claude Code a rencontré 6 divergences entre code et SPECS (dont 2 violations Constitution règle 2). Il a initialement adapté les tests au comportement réel plutôt que de signaler et stopper. La détection s'est faite par question subsidiaire pré-commit ("as-tu fait des choix d'adaptation ?"), pas par rituel formalisé. La règle "Récap structuré pré-commit obligatoire" plus bas dans ce fichier transforme cette parade en discipline systématique.
+
 ## Carnet de référence pour les tests
 
-Le test smoke s'exécute sur un carnet Evernote réel désigné par variable d'environnement :
+Le test smoke s'exécute sur une fixture versionnée dans le repo :
 
-```bash
-export ENEX_REFERENCE_FILE=~/Migration-Evernote/exports-enex/[nom-carnet-test].enex
-pytest tests/test_smoke.py
+```
+tests/fixtures/testmigration.enex   # 7 notes synthétiques sans données personnelles
 ```
 
-Recommandation pour le choix : petit carnet (10-30 notes), représentatif, avec au moins une note texte, une note avec PDF, une note avec image, une note dégradée.
+Cette fixture est reproductible et diffusable. Elle est référencée directement dans le code de test, pas via variable d'environnement.
 
-Le `.enex` de référence n'est JAMAIS versionné dans le repo (risque de fuite de données personnelles).
+Pour un test empirique sur un vrai carnet plus volumineux, la variable d'environnement `ENEX_REFERENCE_FILE` reste disponible :
 
-Les tests de contrat (CT-XX dans SPECS.md) utilisent des fragments XML inlinés dans le code de test, indépendants du carnet de référence.
+```bash
+export ENEX_REFERENCE_FILE=~/Migration-Evernote/exports-enex/[nom-carnet].enex
+```
+
+Recommandation pour le choix d'un carnet réel : petit carnet (10-30 notes), représentatif du corpus cible (admin, pas knowledge), avec au moins une note texte, une note avec PDF, une note avec image, une note dégradée.
+
+Un `.enex` réel n'est JAMAIS versionné dans le repo (risque de fuite de données personnelles) — seule la fixture synthétique l'est.
+
+Les tests de contrat (CT-XX dans SPECS.md) utilisent des fragments XML inlinés dans le code de test, indépendants de toute fixture.
 
 ## Séquence d'implémentation — ordre obligatoire
 
@@ -181,6 +208,8 @@ Les tests de contrat (CT-XX dans SPECS.md) utilisent des fragments XML inlinés 
 Ne jamais paralléliser des étapes de cette séquence.
 Ne jamais passer à l'étape N+1 sans que l'étape N soit validée.
 
+Cycles de correction acceptés : `12 → 12-AUDIT → 12-FIX → 13 → 13-FIX → 13-AUDIT` etc. Chaque cycle est un livrable testable en soi, mais reste rattaché à son étape macro.
+
 ## Patterns architecturaux hérités de YT Knowledge Extractor
 
 Issus de `YT_EXTRACTOR_RETOUR_EXPERIENCE.md`, applicables directement ici :
@@ -200,7 +229,7 @@ Pour les features significatives :
 - Lancer `/review` sur la branche avant de merger
 - Merger sur main via PR ou `git merge`
 
-Pour ce projet de migration ponctuelle, le développement principal restera probablement sur main. Branches uniquement si une décision d'architecture significative émerge en cours d'implémentation et nécessite une validation isolée.
+Pour ce projet de migration ponctuelle, le développement principal reste sur `main`. Branches uniquement si une décision d'architecture significative émerge en cours d'implémentation et nécessite une validation isolée.
 
 ## Gestion des documents de spec
 
@@ -209,6 +238,8 @@ Tout document de spec modifié inclut la date ET l'heure de dernière modificati
 Toute spec doit avoir un entête conforme aux règles inviolables : `**Version**`, `**Date**`, `**Auteur**`, `**Statut**`, `**Repo**`.
 
 Toute modification d'un fichier `.md` structurant existant doit incrémenter la version ET la date.
+
+Le fichier `BACKLOG.md` à la racine du repo matérialise la dette technique connue mais non traitée. Il est mis à jour à chaque prompt qui identifie une nouvelle dette ou en résout une.
 
 ## Signal d'alarme
 
@@ -229,11 +260,49 @@ Tout gap détecté suit ce flux obligatoire :
 
 Un gap implémenté sans mise à jour des specs préalable est une dette de spec silencieuse — exactement ce que la méthode cherche à prévenir.
 
+**Cas particulier V1.8 — divergence code de production vs SPECS révélée par un test**
+
+Si pendant l'écriture d'un test, Claude Code découvre que le code de production actuel diverge de ce que les SPECS demandent (par exemple : SPECS attendent un exit code non-zéro sur une erreur, le code retourne 0 ; SPECS attendent un message précis, le code produit une variante) :
+
+**Comportement interdit** : ajuster les assertions du test au comportement réel du code. C'est de l'adaptation silencieuse — le test valide un bug comme s'il était une feature.
+
+**Comportement obligatoire** :
+1. Signaler immédiatement : `🚨 SPEC MANQUANTE : divergence code/SPECS révélée — [description précise avec référence SPECS Bloc/ligne]`
+2. Stopper l'écriture du test concerné
+3. Attendre l'arbitrage humain (via session Claude.ai en tandem) : soit corriger le code pour se conformer aux SPECS, soit modifier les SPECS pour acter la divergence, soit `pytest.xfail(strict=True)` explicite du test avec référence BACKLOG.md.
+
+**Cas de plusieurs divergences dans la même session** : signaler chacune séparément, ne pas les agréger en un seul signal générique. L'humain a besoin de chaque cas pour arbitrer proprement.
+
 ## Problèmes transversaux — pattern de gestion
 
 Si pendant l'implémentation d'un prompt, Claude Code identifie des problèmes transversaux (incohérences, duplications, tests manquants), il les SIGNALE en fin de réponse sous "⚠️ Problèmes transversaux identifiés" mais ne les CORRIGE PAS dans le même prompt. Chaque transversal devient une entrée BACKLOG pour un prompt dédié.
 
 Règle : "1 prompt = 1 livrable testable" implique aussi "1 prompt ≠ refactor opportuniste".
+
+## Récap structuré pré-commit obligatoire
+
+*Nouvelle règle V1.8 — parade méthodologique à la dérive silencieuse.*
+
+Toute session Claude Code qui produit des modifications de code doit se terminer par un récap structuré **avant** de demander l'autorisation de commit. Le récap distingue explicitement :
+
+1. **Modifications code production** : fichiers et fonctions touchés dans `src/` et `enex2obsidian.py`, avec référence SPECS Bloc/règle Constitution si applicable.
+2. **Modifications tests** : tests dont les assertions ont changé, avec justification (alignement SPECS, correction bug, renforcement).
+3. **Fichiers nouveaux ou renommés** : fixtures, documentation, scripts, etc.
+4. **Signaux 🚨 SPEC MANQUANTE émis** : liste explicite. Si aucun, l'affirmer : "Aucun signal SPEC MANQUANTE émis pendant cette session."
+5. **Découvertes non traitées** : tout bug, incohérence, ou trou de spec identifié en lisant le code mais non corrigé dans le scope du prompt. À reporter à BACKLOG.md.
+6. **Adaptations vs prompt initial** : tout choix d'implémentation qui diverge de ce que le prompt prescrivait littéralement (nom de fichier, structure, signature). À justifier en une ligne.
+7. **Décompte final des tests** : `pytest` complet, décompte passants / failed / skipped / xfail.
+
+Ce récap est **obligatoire** pour :
+- Prompts touchant du code de production
+- Prompts créant des tests d'intégration
+- Prompts modifiant des specs ou de la documentation structurante
+
+Il est **optionnel mais recommandé** pour les prompts triviaux (renommage, correction de typo, ajout de docstring).
+
+**Sans ce récap, l'autorisation de commit ne peut pas être donnée.** Si Claude Code demande à committer sans avoir produit le récap, l'humain (ou une session Claude.ai supervisante) doit refuser et redemander le récap.
+
+**Origine de la règle** : étape 13 (PROMPT-13). Claude Code a fait 6 adaptations silencieuses (assertions ajustées au code réel divergent des SPECS, sans émission des signaux 🚨 SPEC MANQUANTE prévus). La détection s'est faite par question subsidiaire ad hoc pré-commit ("as-tu fait des choix d'adaptation ?"), pas par rituel formalisé. Cette règle transforme la parade en discipline systématique — la méthode ne tient plus sur la bonne foi mais sur un rituel imposé.
 
 ## Points sensibles à surveiller pendant l'implémentation
 
@@ -241,6 +310,7 @@ Risques identifiés en co-construction, à garder en tête à chaque prompt :
 
 - **Parsing XML mémoire** : un `.enex` volumineux (centaines de Mo avec pièces jointes embarquées) chargé d'un coup avec `lxml.etree.parse` sature la RAM. Utiliser `lxml.etree.iterparse` en streaming pour traiter les notes une par une et libérer la mémoire au fur et à mesure.
 - **Décodage base64 streamé** : ne pas charger une pièce jointe complète en mémoire avant de l'écrire. Décoder par chunks vers le fichier de destination.
-- **Encodage des noms de fichiers** : macOS utilise NFD pour les noms de fichiers, Linux NFC. Normaliser systématiquement en NFC avant écriture pour éviter les surprises sur les caractères accentués.
+- **Encodage des noms de fichiers** : macOS utilise NFD pour les noms de fichiers, Linux NFC. Normaliser systématiquement en NFC avant écriture pour éviter les surprises sur les caractères accentués. Constitution règle 10.
 - **iCloud et fichiers en cours de copie** : le vault est dans iCloud Drive. Écrire dans un dossier temporaire local puis déplacer atomiquement vers le vault évite les états intermédiaires synchronisés.
 - **Logs horodatés** : tous les noms de fichiers de log incluent un timestamp `YYYY-MM-DD-HHMM` pour permettre plusieurs runs sans écrasement.
+- **Divergences code/SPECS pendant les tests** : cf. règle V1.8 sous "Signal d'alarme". Un test qui adapte silencieusement ses assertions au comportement réel divergent des SPECS est une dette de contrôle silencieuse — traitement obligatoire par signal 🚨 SPEC MANQUANTE.
