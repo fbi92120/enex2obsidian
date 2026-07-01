@@ -13,5 +13,6 @@ logs/
 .codex/
 PROMPT-*.md
 
-# Exception : fixture de test synthétique sans données perso
+# Exception : fixtures de test synthétiques sans données perso
 !tests/fixtures/testmigration.enex
+!tests/fixtures/malformed.enex
