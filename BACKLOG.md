@@ -7,9 +7,58 @@ Chaque entrée mentionne : origine, description, criticité, action de résoluti
 
 ## Importants — à traiter avant migration réelle
 
-*(Vide — PROMPT-13-FIX a résolu les 6 divergences Constitution bloquantes.)*
+### Filtre entité trop large dans `_validate_enml_structure()`
 
-## Importants — à traiter avant V2 (si V2)
+**Origine** : audit Codex PROMPT-13-AUDIT, section 1. Classé 🔴 BLOQUANT par
+Codex, requalifié 🟡 par arbitrage humain (les .enex issus d'evernote-backup
+sont a priori bien formés).
+**Description** : `src/content_converter.py:105` filtre toute erreur dont le
+message contient "entity". Cela ignore `Entity 'nbsp' not defined` (voulu)
+mais aussi des erreurs d'entité réellement mal formée type `&amp` (non voulu).
+Une note contenant du XHTML cassé uniquement par entité mal formée peut être
+convertie silencieusement au lieu d'être loggée `xhtml_malformed`.
+**Risque migration** : perte silencieuse possible sur du XHTML Evernote réel
+qui contient probablement des entités non-standard.
+**Correction attendue** : filtrer uniquement les messages type
+`Entity 'xxx' not defined`, pas tous les messages contenant "entity". Ajouter
+tests unitaires sur `_validate_enml_structure()` avec `&nbsp;`, `&apos;`,
+`&amp;`, `&amp` cassé.
+**Action** : à surveiller pendant la migration réelle — si le CSV erreurs
+contient des lignes `xhtml_malformed` inattendues, ou si des `.md` sortent
+au contenu vide, revenir corriger avant clôture.
+
+### LI-02 ne couvre pas les fichiers .enex non-XML non vides
+
+**Origine** : audit Codex PROMPT-13-AUDIT, sections 5 et 6. Classé 🔴 BLOQUANT
+par Codex, requalifié 🟡 par arbitrage humain.
+**Description** : la sonde empirique lxml a confirmé qu'un fichier `.enex`
+textuellement non-XML (texte brut, binaire, préambule XML seul) ne déclenche
+pas `XMLSyntaxError` avec `recover=True` — il produit 0 note extraite sans
+erreur remontée. Aucune ligne CSV `enex_unreadable`, aucun log. Violation
+Constitution règle 2 au niveau carnet.
+**Risque migration** : quasi nul dans le cas nominal (les .enex viennent
+d'evernote-backup, format garanti). Risque réel si un .enex est corrompu sur
+disque entre l'export et la migration.
+**Correction attendue** : dans `iter_notes()` ou `process_notebook()`, si 0
+note produite sur un fichier non vide, logger `enex_unreadable` niveau
+`notebook`. Amendement SPECS Bloc 4 à ajouter pour formaliser le cas.
+**Action** : à traiter avant clôture projet si les .enex se comportent bien,
+ou immédiatement si un cas apparaît en migration.
+
+### Fallback `att_map.get("")` peut produire un faux positif "pièce jointe corrompue"
+
+**Origine** : audit Codex PROMPT-13-AUDIT, section 3. Classé 🟡 IMPORTANT.
+**Description** : `src/writer.py:289` — si un placeholder hashé n'est pas
+trouvé, le writer regarde `attachment_map.get("")`. S'il existe une PJ
+corrompue dans la même note, tout placeholder non résolu (ex : correspondant
+à une autre PJ absente pour d'autres raisons) devient faussement
+"pièce jointe corrompue".
+**Risque migration** : cosmétique — l'utilisateur peut voir "corrompue" dans
+un `.md` alors que la vraie raison est autre. Diagnostic dégradé.
+**Correction attendue** : dans `process_note`, conserver une correspondance
+explicite entre placeholder hash et résultat d'attachement.
+
+## Importants — à traiter avant clôture projet ou V2
 
 *Note projet : V1 admin est le scope définitif. Ces items sont ici pour
 mémoire au cas où le scope évoluerait.*
@@ -24,6 +73,50 @@ Importants reportés (référence PROMPT-12-FIX section Backlog) :
   vérifiés (`tags` en string au lieu de list passerait).
 - `test_smoke_no_file_outside_vault` : recherche uniquement `.md` dans
   `log_dir` et `source_dir`. Une PJ écrite hors vault passerait.
+
+### Détail d'erreur XHTML insuffisant pour le CSV
+
+**Origine** : audit Codex PROMPT-13-AUDIT, section 1. Classé 🟡 IMPORTANT.
+**Description** : `src/content_converter.py:113` — `ContentConversionError`
+ne transporte que `structural_errors[0].message`, sans ligne/colonne. Le CSV
+erreurs mentionnera "unclosed element" ou équivalent sans localiser dans la note.
+**Correction attendue** : inclure `line`, `column`, `level_name` du
+`parser.error_log` dans le message de `ContentConversionError`.
+**Impact migration** : diagnostic post-migration dégradé si des notes tombent
+en `xhtml_malformed`.
+
+### Performance : idempotence PJ relit tout le fichier existant
+
+**Origine** : audit Codex PROMPT-13-AUDIT, section 4. Classé 🟡 IMPORTANT.
+**Description** : `src/attachment_handler.py:229` —
+`existing_md5 = hashlib.md5(existing_path.read_bytes()).hexdigest()`.
+Sur gros corpus avec PDFs/scans de dizaines de Mo chacun, le 2e run relit
+intégralement toutes les PJ existantes.
+**Correction attendue** : lire en chunks (`hashlib.md5()` incrémental) au lieu
+de `read_bytes()` complet.
+**Impact migration** : coût I/O potentiellement élevé sur relance de migration.
+Acceptable en V1 pour 1772 notes admin.
+
+### Idempotence cross-session non couverte par tests de contrat
+
+**Origine** : audit Codex PROMPT-13-AUDIT, section 8. Classé 🟡 IMPORTANT.
+**Description** : l'idempotence cross-session ajoutée dans `attachment_handler`
+(étape 6b) est couverte en intégration par `test_idempotence`, mais pas au
+niveau contrat unitaire. Diagnostic dégradé si régression subtile du handler.
+**Correction attendue** : ajouter un test contract `AttachmentHandler` : écrire
+une PJ, recréer un handler sur le même `target_dir`, traiter la même PJ,
+attendre `skipped_existing` et pas de suffixe `-2`.
+
+### BACKLOG.md et CLAUDE.md référencent CONTEXTE-PROJET.md absent du repo
+
+**Origine** : audit Codex PROMPT-13-AUDIT, section 7. Classé 🟡 IMPORTANT
+(par Codex, qui ne connaît pas la convention projet).
+**Description** : `CONTEXTE-PROJET.md` vit hors repo (dans le projet Claude.ai
+enex2obsidian). Les références dans `BACKLOG.md` et `CLAUDE.md:24` peuvent
+troubler un futur lecteur du repo.
+**Correction attendue** : soit clarifier les références ("hors repo, vit dans
+le projet Claude.ai enex2obsidian"), soit remplacer par des entrées autonomes
+dans BACKLOG.md.
 
 ### LI-06 / md_exists_no_force — PJ tentées avant le skip .md
 
@@ -48,6 +141,34 @@ les PJ sont tentées à tort.
 - Message clés frontmatter manquantes : inclure `present={sorted(fm.keys())}`
 - Commentaire de scope sur la fixture (read-only après `migrated_vault`)
 
+### Audit Codex PROMPT-13-AUDIT — mineurs
+
+- **Commentaire obsolète sur fallback dans content_converter** :
+  `src/content_converter.py:123` mentionne encore un fallback qui ne s'applique
+  plus depuis l'ajout de `_validate_enml_structure()`. À clarifier.
+- **Reporter créé même pour erreur terminale `--carnet` absent** :
+  `enex2obsidian.py:88` — `main()` instancie `Reporter` avant `run_migration()`.
+  Un `--carnet` absent crée potentiellement des fichiers logs vides/header-only
+  avant de retourner 1. Contrat SPECS "aucune migration lancée" respecté au sens
+  strict, mais artefacts créés à tort.
+- **Contexte Markdown non préservé dans les substitutions placeholder** :
+  `src/writer.py:309` — substitution regex inline pour messages PJ. Rendu
+  dépendant du contexte (liste, tableau).
+- **Mutation LI-03 couvre un seul cas de XHTML cassé** :
+  `tests/test_limits.py:271` — mutation "balises non fermées". Ne couvre pas
+  mal-imbrication, entités, namespace. Tests unitaires directs sur
+  `_validate_enml_structure()` seraient plus rigoureux.
+- **LI-09 accepte n'importe quel code de sortie non-zéro** :
+  `tests/test_limits.py:192` — `exit_code != 0`. Le code réel retourne 1.
+  Assertion trop laxe : un retour accidentel de 137 passerait. À durcir en `== 1`.
+- **Collision MD5 théorique dans idempotence PJ** :
+  `src/attachment_handler.py:230` — deux contenus différents avec même taille
+  + même MD5 seraient assimilés identiques. Risque négligeable pour migration
+  personnelle, mais SHA-256 serait plus défendable.
+- **CT-08 à CT-12 (content_converter) ne couvrent pas la nouvelle exception** :
+  Couverture reportée à `test_limits.py::TestDegradedInput::test_li03`.
+  Acceptable en intégration.
+
 ### Section 5 PROMPT-13-FIX — malformed.enex fixture
 
 **Origine** : PROMPT-13-FIX Section 5.
@@ -70,4 +191,4 @@ Documenté dans CONTEXTE-PROJET.md :
 
 ---
 
-*Dernière mise à jour : 2026-07-01 (PROMPT-13-FIX)*
+*Dernière mise à jour : 2026-07-01 (PROMPT-13-AUDIT-BACKLOG)*
