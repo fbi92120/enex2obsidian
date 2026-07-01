@@ -287,6 +287,10 @@ def _resolve_placeholders(
         hash_val = m.group(1)
         att = attachment_map.get(hash_val)
         if att is None:
+            # SPECS Bloc 4 : PJ corrompue stockée sous hash="" par attachment_handler
+            corrupted = attachment_map.get("")
+            if corrupted and corrupted.status in ("corrupted_base64", "missing_hash"):
+                return "[pièce jointe corrompue, voir log]"
             unresolved.append(hash_val)
             return f"[pièce jointe non résolue : {hash_val[:8]}...]"
         if att.status == "ok" and att.final_filename:
@@ -297,6 +301,9 @@ def _resolve_placeholders(
             else:
                 encoded = urllib.parse.quote(filename, safe="")
                 return f"[{filename}](attachments/{encoded})"
+        if att.status == "skipped_size":  # SPECS Bloc 4 : [pièce jointe ignorée : taille > N Mo, voir log]
+            limit = att.size_limit_mb if att.size_limit_mb is not None else "?"
+            return f"[pièce jointe ignorée : taille > {limit} Mo, voir log]"
         return f"[pièce jointe non disponible : {att.status}]"
 
     resolved = _PLACEHOLDER_RE.sub(_replace, content)

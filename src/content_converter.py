@@ -25,6 +25,16 @@ from lxml import etree
 ATTACHMENT_PLACEHOLDER = "{{ATTACHMENT:{hash}}}"
 
 
+class ContentConversionError(Exception):
+    """ENML content has non-recoverable structural errors (unclosed tags, etc.).
+
+    Raised by convert_content when lxml detects structural errors even in
+    recovery mode. Entity errors (e.g. &nbsp; from ENML DTD) are excluded —
+    only structural markup failures trigger this exception.
+    SPECS Bloc 4 : note avec XHTML mal formé → log + skip, aucun .md produit.
+    """
+
+
 class _EvernoteMarkdownConverter(md_lib.MarkdownConverter):
     """Convertisseur markdownify avec gestion des checkboxes Evernote.
 
@@ -51,20 +61,60 @@ def convert_content(xhtml_content: str | None) -> str:
         Chaîne vide "" si xhtml_content est None ou vide.
         Les balises <en-media> sont remplacées par des placeholders
         {{ATTACHMENT:hash}} pour résolution ultérieure par l'orchestrateur.
-        Si lxml échoue, tentative de conversion via fallback regex ;
-        retourne "" uniquement si toutes les tentatives échouent.
 
-    Ne lève jamais d'exception : toute erreur retourne "".
+    Raises:
+        ContentConversionError: si lxml détecte des erreurs structurelles dans l'ENML
+            (balises non fermées, document tronqué, etc.). Les erreurs d'entités HTML
+            (&nbsp; etc., normales en ENML) ne déclenchent pas cette exception.
+            SPECS Bloc 4 : note avec XHTML mal formé → log + skip, aucun .md produit.
     """
     if not xhtml_content:
         return ""
+
+    _validate_enml_structure(xhtml_content)  # raises ContentConversionError if malformed
 
     try:
         inner_html = _extract_en_note_content(xhtml_content)
         md = _to_markdown(inner_html)
         return _postprocess(md)
-    except Exception:
-        return ""
+    except ContentConversionError:
+        raise
+    except Exception as exc:
+        raise ContentConversionError(f"Conversion failed unexpectedly: {exc}") from exc
+
+
+def _validate_enml_structure(xhtml_content: str) -> None:
+    """Parse l'ENML avec recover=True et lève ContentConversionError si des erreurs
+    structurelles sont détectées (balises non fermées, document tronqué...).
+
+    Les erreurs d'entités (entity not defined — normales en ENML car définies par la DTD
+    Evernote non chargée) sont explicitement ignorées pour ne pas rejeter du contenu valide.
+    Seules les erreurs de niveau ERROR ou FATAL non liées aux entités sont bloquantes.
+    """
+    parser = etree.XMLParser(
+        recover=True,
+        resolve_entities=False,
+        huge_tree=True,
+        no_network=True,
+    )
+    try:
+        etree.fromstring(xhtml_content.encode("utf-8"), parser)
+    except etree.XMLSyntaxError as exc:
+        raise ContentConversionError(f"ENML unparseable: {exc}") from exc
+
+    structural_errors = [
+        e for e in parser.error_log
+        if e.level_name in ("ERROR", "FATAL")
+        and "entity" not in e.message.lower()
+        # ENML extrait du CDATA débute parfois par \n + espaces avant <?xml?> ;
+        # lxml log FATAL "XML declaration allowed only at start" mais récupère.
+        and "xml declaration" not in e.message.lower()
+    ]
+    if structural_errors:
+        raise ContentConversionError(
+            f"ENML structural errors ({len(structural_errors)}): "
+            f"{structural_errors[0].message}"
+        )
 
 
 def _extract_en_note_content(xhtml_content: str) -> str:

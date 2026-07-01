@@ -15,7 +15,7 @@ import yaml
 
 from src.enex_parser import iter_notes
 from src.metadata_extractor import extract_metadata
-from src.content_converter import convert_content
+from src.content_converter import convert_content, ContentConversionError
 from src.attachment_handler import AttachmentHandler
 from src.notebook_selector import load_notebook_list
 from src.filename_normalizer import to_ascii_slug, slug_for_note
@@ -83,13 +83,13 @@ def main(argv: Optional[list] = None) -> int:
         return 1
 
     if paths["dry_run"]:
-        run_migration(paths, reporter=None, dry_run=True)
+        rc = run_migration(paths, reporter=None, dry_run=True)
     else:
         paths["log_directory"].mkdir(parents=True, exist_ok=True)
         with Reporter(log_dir=paths["log_directory"]) as reporter:
-            run_migration(paths, reporter=reporter, dry_run=False)
+            rc = run_migration(paths, reporter=reporter, dry_run=False)
 
-    return 0
+    return rc
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -261,14 +261,29 @@ def find_enex_file(notebook_name: str, source_dir: Path) -> Optional[Path]:
     return candidates[0]
 
 
-def run_migration(paths: dict, reporter: Optional[Reporter], dry_run: bool) -> None:
+def run_migration(paths: dict, reporter: Optional[Reporter], dry_run: bool) -> int:
     """Boucle principale sur les carnets.
 
     Résout chaque carnet → fichier .enex, délègue à process_notebook,
     affiche l'entête et le résumé final.
+
+    Returns:
+        0 si la migration s'est déroulée normalement (même avec des erreurs par note).
+        1 si une erreur terminale empêche tout démarrage (ex. --carnet X introuvable).
     """
     single = paths["single_notebook"]
     notebooks = [single] if single else load_notebook_list(paths["notebook_list"])
+
+    # SPECS Bloc 4 : --carnet "X" avec X absent → erreur terminal, aucune migration
+    if single:
+        _enex_check = find_enex_file(single, paths["source_directory"])
+        if _enex_check is None:
+            print(
+                f"[ERREUR] Carnet '{single}' introuvable dans "
+                f"{paths['source_directory']} (aucun fichier .enex correspondant).",
+                file=sys.stderr,
+            )
+            return 1
 
     print("\n=== Migration Evernote → Obsidian ===")
     if dry_run:
@@ -321,6 +336,7 @@ def run_migration(paths: dict, reporter: Optional[Reporter], dry_run: bool) -> N
         )
 
     log_summary(stats=stats, paths=paths, reporter=reporter, dry_run=dry_run)
+    return 0
 
 
 def process_notebook(
@@ -467,8 +483,21 @@ def process_note(
             )
         return "error"
 
-    # Conversion contenu (ne lève jamais d'exception per spec)
-    md_content = convert_content(raw_note.content_xhtml)
+    # Conversion contenu — lève ContentConversionError si ENML structurellement cassé
+    # SPECS Bloc 4 : note avec XHTML mal formé → log level=note + skip, aucun .md produit
+    try:
+        md_content = convert_content(raw_note.content_xhtml)
+    except ContentConversionError as exc:
+        if reporter:
+            reporter.record_error(
+                level=ErrorLevel.NOTE,
+                cause="xhtml_malformed",
+                detail=str(exc),
+                notebook=notebook_name,
+                note_guid=raw_note.guid,
+                note_title=title,
+            )
+        return "error"
 
     # Dry-run : affichage plan et sortie anticipée
     if dry_run:

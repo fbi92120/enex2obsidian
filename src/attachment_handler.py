@@ -59,6 +59,7 @@ class AttachmentResult:
     error_detail: str | None      # message d'erreur pour le reporter, None si ok
     note_title: str               # contexte pour le reporter
     note_guid: str                # contexte pour le reporter
+    size_limit_mb: int | float | None = None  # plafond configuré, renseigné pour skipped_size
 
 
 class AttachmentHandler:
@@ -87,6 +88,7 @@ class AttachmentHandler:
         """
         self._target_dir = Path(target_dir)
         self._size_limit_bytes = size_limit_mb * 1024 * 1024
+        self._size_limit_mb = size_limit_mb  # conservé pour message SPECS Bloc 4
         self._allowed_mime_types = allowed_mime_types
         # hash MD5 hexdigest → nom de fichier final écrit (idempotence intra-session)
         self._hash_to_filename: dict[str, str] = {}
@@ -183,6 +185,7 @@ class AttachmentHandler:
                 ),
                 note_title=note_title,
                 note_guid=note_guid,
+                size_limit_mb=self._size_limit_mb,  # SPECS Bloc 4 message
             )
 
         # Étape 4 : Idempotence intra-session (même contenu → même fichier)
@@ -215,6 +218,30 @@ class AttachmentHandler:
                 note_title=note_title,
                 note_guid=note_guid,
             )
+
+        # Étape 6b : Idempotence cross-session — même fichier déjà sur disque → skip
+        # Comparaison taille puis MD5 pour discriminer les fichiers de même taille.
+        # Constitution règle 5 : même périmètre = même résultat entre deux runs.
+        existing_path = self._target_dir / final_name
+        if existing_path.exists():
+            try:
+                if existing_path.stat().st_size == size_bytes:
+                    existing_md5 = hashlib.md5(existing_path.read_bytes()).hexdigest()
+                    if existing_md5 == md5_hash:
+                        self._hash_to_filename[md5_hash] = final_name
+                        return AttachmentResult(
+                            hash=md5_hash,
+                            status="skipped_existing",
+                            final_filename=final_name,
+                            mime=mime,
+                            original_filename=original_filename,
+                            size_bytes=size_bytes,
+                            error_detail=None,
+                            note_title=note_title,
+                            note_guid=note_guid,
+                        )
+            except OSError:
+                pass  # fichier illisible → poursuite vers _resolve_collision
 
         # Étape 7 : Gestion des collisions (suffixes -2, -3, ...)
         final_name = self._resolve_collision(final_name)
@@ -320,6 +347,7 @@ class AttachmentHandler:
         error_detail: str | None,
         note_title: str,
         note_guid: str,
+        size_limit_mb: "int | float | None" = None,
     ) -> AttachmentResult:
         """Construit un AttachmentResult d'erreur (final_filename=None)."""
         return AttachmentResult(
@@ -332,4 +360,5 @@ class AttachmentHandler:
             error_detail=error_detail,
             note_title=note_title,
             note_guid=note_guid,
+            size_limit_mb=size_limit_mb,
         )

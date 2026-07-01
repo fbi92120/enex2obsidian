@@ -17,6 +17,7 @@ Run with:
 
 import csv
 import hashlib
+import re
 import shutil
 import time
 from pathlib import Path
@@ -74,7 +75,9 @@ def _run(paths: dict):
     log_dir.mkdir(parents=True, exist_ok=True)
     try:
         with Reporter(log_dir=log_dir) as reporter:
-            run_migration(paths, reporter=reporter, dry_run=paths.get("dry_run", False))
+            rc = run_migration(paths, reporter=reporter, dry_run=paths.get("dry_run", False))
+            if rc:
+                exit_code = rc
     except Exception:
         exit_code = 1
     errors_csvs = sorted(log_dir.glob("errors-*.csv"))
@@ -168,13 +171,12 @@ class TestNotebookSelection:
                 "Migration log must mention the missing notebook name"
             )
 
-    def test_li09_flag_carnet_avec_nom_absent(self, tmp_path):
+    def test_li09_flag_carnet_avec_nom_absent(self, tmp_path, capsys):
         """LI-09: --carnet 'X' where no matching .enex exists.
 
-        NOTE: SPECS Bloc 4 says 'Erreur terminal explicite. Aucune migration
-        lancée.' (exit != 0). Actual implementation exits 0 and logs
-        enex_not_found at notebook level — code/spec divergence.
-        See '⚠️ Problèmes transversaux' at the bottom of this file.
+        SPECS Bloc 4: 'Erreur terminal explicite. Aucune migration lancée.' (exit != 0).
+        The check happens in run_migration() before any migration starts: stderr message
+        mentioning the notebook name + return 1.
         """
         source_dir = tmp_path / "source"
         source_dir.mkdir()
@@ -187,10 +189,8 @@ class TestNotebookSelection:
         )
         exit_code, errors_csv = _run(paths)
 
-        # Current code exits 0 (not 1 as SPECS mandates)
-        assert exit_code == 0, (
-            "Current implementation exits 0 for missing --carnet "
-            "(SPECS says exit != 0; flagged as transversal problem)"
+        assert exit_code != 0, (
+            "SPECS Bloc 4: --carnet with missing .enex must exit non-zero"
         )
 
         md_files = list(vault.rglob("*.md")) if vault.exists() else []
@@ -198,9 +198,10 @@ class TestNotebookSelection:
             f"Vault must be empty for unknown --carnet, found: {[f.name for f in md_files]}"
         )
 
-        notebook_rows = _csv_rows(errors_csv, "notebook")
-        assert any(r["cause"] == "enex_not_found" for r in notebook_rows), (
-            f"Expected enex_not_found in notebook errors, got: {notebook_rows}"
+        captured = capsys.readouterr()
+        assert "carnet_inexistant" in captured.err, (
+            f"Expected stderr to mention the missing notebook name 'carnet_inexistant', "
+            f"got stderr: {captured.err!r}"
         )
 
 
@@ -213,9 +214,13 @@ class TestDegradedInput:
     def test_li02_enex_xml_globalement_invalide(self, tmp_path):
         """LI-02: Globally unreadable ENEX (empty file) — notebook-level error, empty vault.
 
-        An empty file triggers XMLSyntaxError in lxml.etree.iterparse even with
+        An empty file (0 bytes) triggers XMLSyntaxError in lxml.etree.iterparse even with
         recover=True ('no element found'), which iter_notes re-raises as ValueError.
         process_notebook catches it and logs cause='enex_unreadable'.
+
+        Note (PROMPT-13-FIX Section 5): tested alternatives (truncated XML, XML prolog only,
+        plain text) are all silently recovered by lxml (0 notes, no error). Only an empty
+        file reliably triggers XMLSyntaxError with recover=True. Fixture kept as 0 bytes.
         """
         source_dir = tmp_path / "source"
         source_dir.mkdir()
@@ -248,12 +253,13 @@ class TestDegradedInput:
     def test_li03_note_avec_xhtml_mal_forme(self, tmp_path):
         """LI-03: Note with malformed XHTML in <content>.
 
-        NOTE: SPECS Bloc 4 says the note should be skipped (no .md produced)
-        and an error logged at note level. Actual implementation uses best-effort
-        conversion (convert_content never raises): the note IS written with
-        partial/empty Markdown content. No note-level error in CSV.
-        Test verifies the actual tolerant behavior (no crash, all notes written).
-        See '⚠️ Problèmes transversaux' at the bottom of this file.
+        SPECS Bloc 4: note should be skipped (no .md produced) and an error
+        logged at note level with cause='xhtml_malformed'. The batch continues.
+
+        convert_content() now raises ContentConversionError when lxml detects
+        structural errors (unclosed tags, etc.) even in recover mode. process_note()
+        catches the exception, logs level=note / cause=xhtml_malformed, returns 'error'.
+        No .md is produced for the malformed note; all other notes succeed.
         """
         source_dir = tmp_path / "source"
         source_dir.mkdir()
@@ -262,7 +268,7 @@ class TestDegradedInput:
             first_note = root.findall("note")[0]
             content_elem = first_note.find("content")
             if content_elem is not None:
-                # CDATA with unclosed XHTML — lxml recover=True handles gracefully
+                # Unclosed tags → lxml logs structural ERROR even with recover=True
                 content_elem.text = CDATA(
                     "<en-note><div>malformed xhtml content without closing tags"
                 )
@@ -274,21 +280,23 @@ class TestDegradedInput:
         paths = _build_paths(source_dir, vault, log_dir)
         exit_code, errors_csv = _run(paths)
 
-        assert exit_code == 0, "Pipeline must not crash on malformed note XHTML"
+        assert exit_code == 0, "Constitution rule 1: batch must not stop on malformed note XHTML"
 
         src_count = _source_count()
         md_files = list(vault.rglob("*.md"))
-        # Best-effort: ALL notes produce a .md (convert_content never raises)
-        assert len(md_files) == src_count, (
-            f"Expected {src_count} .md files (best-effort XHTML tolerance), "
+        # SPECS Bloc 4: malformed note is skipped → src_count - 1 .md files
+        assert len(md_files) == src_count - 1, (
+            f"Expected {src_count - 1} .md files (malformed note skipped), "
             f"found {len(md_files)}"
         )
 
         note_rows = _csv_rows(errors_csv, "note")
-        # Actual behavior: 0 note-level errors (SPECS expected 1)
-        assert len(note_rows) == 0, (
-            f"Actual implementation produces 0 note errors for malformed XHTML "
-            f"(SPECS says 1); got: {[r['cause'] for r in note_rows]}"
+        assert len(note_rows) >= 1, (
+            "Expected at least 1 note-level error in CSV for malformed XHTML"
+        )
+        causes = [r["cause"] for r in note_rows]
+        assert "xhtml_malformed" in causes, (
+            f"Expected cause='xhtml_malformed', got: {causes}"
         )
 
 
@@ -304,9 +312,7 @@ class TestAttachmentLimits:
         Uses size_limit_mb=0.001 (~1 KB) — all large attachments in the
         fixture (e.g. 146KB PDF) are skipped with cause='skipped_size'.
         The note .md is produced; the placeholder becomes
-        '[pièce jointe non disponible : skipped_size]' (actual text;
-        SPECS says '[pièce jointe ignorée : taille > N Mo, voir log]' —
-        divergence flagged as transversal problem).
+        '[pièce jointe ignorée : taille > N Mo, voir log]' (SPECS Bloc 4).
         """
         source_dir = tmp_path / "source"
         source_dir.mkdir()
@@ -333,26 +339,24 @@ class TestAttachmentLimits:
             f"attachment causes: {[r['cause'] for r in att_rows]}"
         )
 
-        # Verify at least one .md mentions the unavailable attachment
-        placeholder_text = "pièce jointe non disponible : skipped_size"
+        # SPECS Bloc 4: [pièce jointe ignorée : taille > N Mo, voir log]
+        pattern = re.compile(r"\[pièce jointe ignorée : taille > .+ Mo, voir log\]")
         found = any(
-            placeholder_text in md.read_text(encoding="utf-8")
+            pattern.search(md.read_text(encoding="utf-8"))
             for md in md_files
         )
         assert found, (
-            f"Expected at least one .md to contain '{placeholder_text}' "
-            f"for oversized attachment placeholder"
+            "Expected at least one .md to match SPECS placeholder pattern "
+            r"'[pièce jointe ignorée : taille > N Mo, voir log]'"
         )
 
     def test_li05_piece_jointe_avec_base64_corrompu(self, tmp_path):
         """LI-05: Attachment with corrupted base64 data.
 
         The corrupted attachment cannot be decoded: hash_val='' is stored in
-        att_map but the placeholder in the .md uses the original MD5 hash
-        from <en-media hash="...">, which is never found in att_map.
-        Result: '[pièce jointe non résolue : HASH...]' in the .md
-        (not '[pièce jointe corrompue, voir log]' as SPECS say — divergence
-        flagged as transversal problem).
+        att_map under key ''. _resolve_placeholders() detects att_map.get('')
+        with status='corrupted_base64' and substitutes the SPECS-mandated text:
+        '[pièce jointe corrompue, voir log]' (SPECS Bloc 4).
         """
         source_dir = tmp_path / "source"
         source_dir.mkdir()
@@ -381,12 +385,6 @@ class TestAttachmentLimits:
             f"found {len(md_files)}"
         )
 
-        # The corrupted attachment is NOT in attachments/
-        notebook_dirs = [d for d in vault.iterdir() if d.is_dir()]
-        assert len(notebook_dirs) == 1, f"Expected 1 notebook dir, found {len(notebook_dirs)}"
-        att_dir = notebook_dirs[0] / "attachments"
-        # Corrupted attachment produces nothing on disk (or collision-free originals only)
-
         att_rows = _csv_rows(errors_csv, "attachment")
         corrupted = [r for r in att_rows if r["cause"] == "corrupted_base64"]
         assert len(corrupted) >= 1, (
@@ -394,14 +392,15 @@ class TestAttachmentLimits:
             f"attachment causes: {[r['cause'] for r in att_rows]}"
         )
 
-        # .md of the host note contains 'pièce jointe non résolue' (actual placeholder text)
-        first_note_mds = [
+        # SPECS Bloc 4: .md must contain '[pièce jointe corrompue, voir log]'
+        corrupted_text = "[pièce jointe corrompue, voir log]"
+        found_mds = [
             md for md in md_files
-            if "pièce jointe non résolue" in md.read_text(encoding="utf-8")
+            if corrupted_text in md.read_text(encoding="utf-8")
         ]
-        assert first_note_mds, (
-            "Expected at least one .md to contain 'pièce jointe non résolue' "
-            "for corrupted attachment whose hash cannot be computed"
+        assert found_mds, (
+            f"Expected at least one .md to contain '{corrupted_text}' "
+            f"for corrupted attachment (SPECS Bloc 4)"
         )
 
 
@@ -589,12 +588,13 @@ class TestVaultAccess:
 class TestIdempotence:
 
     def test_idempotence_deux_runs_successifs_etat_identique(self, tmp_path):
-        """Constitution rule 5: identical perimeter = identical .md result.
+        """Constitution rule 5: identical perimeter = identical vault state after Run 2.
 
-        Verifies that .md files produced by Run 1 are not modified by Run 2
-        (same sha256 checksums). Note: attachment files may be duplicated in
-        Run 2 due to absent cross-session idempotence in AttachmentHandler
-        (flagged as transversal problem) — only .md content is asserted here.
+        Verifies that ALL files in the vault (both .md and attachments/) produced
+        by Run 1 are unchanged after Run 2 — same paths, same sha256 checksums.
+        Cross-session attachment idempotence is implemented in AttachmentHandler
+        (size-based check before collision resolution): Run 2 returns
+        'skipped_existing' for attachments already on disk with matching size.
         """
         source_dir = tmp_path / "source"
         source_dir.mkdir()
@@ -608,25 +608,33 @@ class TestIdempotence:
         exit_code1, _ = _run(paths1)
         assert exit_code1 == 0, "Run 1 must succeed"
 
-        md_files_r1 = sorted(vault.rglob("*.md"))
-        assert md_files_r1, "Run 1 must produce at least one .md"
-        sha256_r1 = {md: _sha256(md) for md in md_files_r1}
+        all_files_r1 = sorted(f for f in vault.rglob("*") if f.is_file())
+        assert all_files_r1, "Run 1 must produce at least one file"
+        sha256_r1 = {f: _sha256(f) for f in all_files_r1}
 
-        # Run 2 — same parameters, same vault
+        # Run 2 — same parameters, same vault (no --force)
         paths2 = _build_paths(source_dir, vault, log_dir2)
         exit_code2, _ = _run(paths2)
         assert exit_code2 == 0, "Run 2 must succeed"
 
-        # Every .md from Run 1 must still exist with identical content
+        # Every file from Run 1 must still exist with identical sha256
         changed = []
-        for md, digest in sha256_r1.items():
-            assert md.exists(), f".md from Run 1 is missing after Run 2: {md.name}"
-            if _sha256(md) != digest:
-                changed.append(md.name)
+        for f, digest in sha256_r1.items():
+            assert f.exists(), f"File from Run 1 is missing after Run 2: {f.name}"
+            if _sha256(f) != digest:
+                changed.append(str(f.relative_to(vault)))
 
         assert not changed, (
-            f"Constitution rule 5 violated: {len(changed)} .md file(s) were "
+            f"Constitution rule 5 violated: {len(changed)} file(s) were "
             f"modified by Run 2: {changed}"
+        )
+
+        # No new files must appear (Run 2 skips existing .md and attachments)
+        all_files_r2 = sorted(f for f in vault.rglob("*") if f.is_file())
+        new_files = [f for f in all_files_r2 if f not in sha256_r1]
+        assert not new_files, (
+            f"Constitution rule 5: Run 2 created {len(new_files)} new file(s) "
+            f"not present after Run 1: {[str(f.relative_to(vault)) for f in new_files]}"
         )
 
 
@@ -704,44 +712,29 @@ class TestNoteWithoutTitle:
 
 
 # ---------------------------------------------------------------------------
-# ⚠️ Problèmes transversaux identifiés (NE PAS corriger dans ce prompt)
+# Divergences corrigées par PROMPT-13-FIX (2026-06-30)
 # ---------------------------------------------------------------------------
 #
-# 1. LI-03 — SPECS/code divergence: XHTML malformed in note
-#    SPECS Bloc 4 says: note skipped, .md not produced, note-level error logged.
-#    Actual code: convert_content() is best-effort (never raises), malformed
-#    XHTML produces a .md with empty/partial Markdown content, no error logged.
-#    Fix: make convert_content raise on invalid ENML, or check parse_errors in
-#    process_note and skip note if non-empty.
+# 1. LI-03 — FIXED: convert_content() raises ContentConversionError on structural
+#    ENML errors; process_note() catches it, logs xhtml_malformed, returns "error".
+#    No .md produced for the malformed note. Batch continues.
 #
-# 2. LI-09 — SPECS/code divergence: --carnet X with no matching .enex
-#    SPECS Bloc 4 says: "Erreur terminal explicite. Aucune migration lancée."
-#    (exit != 0). Actual code: exits 0, logs enex_not_found at notebook level.
-#    Fix: detect single_notebook at startup (validate_environment or run_migration)
-#    and return non-zero exit when the sole carnet has no .enex.
+# 2. LI-09 — FIXED: run_migration() checks single_notebook enex existence early,
+#    prints to stderr, returns 1. main() propagates the return code.
 #
-# 3. LI-05 — SPECS/code text divergence: corrupted attachment placeholder
-#    SPECS says .md should contain "[pièce jointe corrompue, voir log]".
-#    Actual code: corrupted_base64 → att.hash="" → placeholder not found in
-#    att_map → "[pièce jointe non résolue : HASH[:8]...]" in .md.
-#    Fix: either propagate the hash from <en-media> to the error result, or
-#    keep a set of "known-corrupted hashes" to resolve the placeholder.
+# 3. LI-04 — FIXED: _resolve_placeholders uses skipped_size AttachmentResult's
+#    size_limit_mb field → "[pièce jointe ignorée : taille > N Mo, voir log]".
 #
-# 4. LI-04 — SPECS/code text divergence: oversized attachment placeholder
-#    SPECS says .md should contain "[pièce jointe ignorée : taille > N Mo, voir log]".
-#    Actual code: "[pièce jointe non disponible : skipped_size]".
-#    Fix: update _resolve_placeholders to use SPECS-mandated text per status.
+# 4. LI-05 — FIXED: _resolve_placeholders detects att_map.get("") for
+#    corrupted/missing-hash results → "[pièce jointe corrompue, voir log]".
 #
-# 5. TestIdempotence — cross-session attachment idempotence missing
-#    Constitution rule 5 says "même périmètre = même résultat". Run 2 creates
-#    collision-suffixed copies of attachments because _hash_to_filename dict
-#    is per-session (not persisted). Vault file list is NOT the same after Run 2.
-#    Fix: persist hash→filename mapping across sessions (e.g. in a manifest file),
-#    or check disk for existing content before collision-suffixing.
+# 5. Cross-session attachment idempotence — FIXED: AttachmentHandler checks
+#    existing file size before collision resolution (Étape 6b). Same file on disk
+#    → skipped_existing, no suffix-2 duplicate. Constitution rule 5 now covers PJ.
 #
-# 6. LI-06 / md_exists_no_force — PJ processées avant le skip .md
-#    SPECS Bloc 4 says "Pièces jointes de cette note NON copiées non plus."
-#    Actual code: process_note handles attachments BEFORE writer.write(). If
-#    writer returns skipped_existing, the already-written attachment copies
-#    are not rolled back (collision-suffixed duplicates left on disk).
-#    Fix: check if .md exists BEFORE processing attachments in process_note.
+# Remaining known divergence (see BACKLOG.md):
+# - LI-06 / md_exists_no_force: attachments are processed BEFORE the writer
+#   skip check. On Run 2 without --force, skipped_existing is returned by the
+#   attachment handler (fixed above), so no duplicates appear in practice.
+#   But SPECS Bloc 4 says "PJ de cette note NON copiées non plus" — strictly
+#   the attachments should not even be attempted. Documented in BACKLOG.md.
