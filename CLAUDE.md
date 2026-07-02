@@ -1,9 +1,9 @@
 # CLAUDE.md — Projet Migration Evernote → Obsidian
 
-**Version** : 1.8
-**Date** : 2026-06-30
+**Version** : 1.9
+**Date** : 2026-07-01
 **Auteur** : François Biller
-**Statut** : Étape 13/14 exécutée, PROMPT-13-FIX rédigé et en attente d'application (bugs Constitution règle 2 à corriger avant migration)
+**Statut** : Étape 14/14 exécutée. Prêt pour migration réelle.
 **Repo** : enex2obsidian (local)
 
 Emplacement cible : `~/Projects/enex2obsidian/CLAUDE.md`
@@ -202,7 +202,7 @@ Les tests de contrat (CT-XX dans SPECS.md) utilisent des fragments XML inlinés 
 11. enex2obsidian.py             (orchestrateur passif, zéro logique métier)
 12. tests/test_smoke.py          ← APRÈS pipeline complet
 13. tests/test_limits.py
-14. README.md + README.fr.md
+14. README.md
 ```
 
 Ne jamais paralléliser des étapes de cette séquence.
