@@ -1,5 +1,9 @@
 # BACKLOG — enex2obsidian
 
+# BACKLOG — enex2obsidian
+Version : 1.1 (incrémenter)
+Date : 2026-07-03 [heure d'ajout]
+
 Dette technique et écarts identifiés mais non traités.
 Chaque entrée mentionne : origine, description, criticité, action de résolution attendue.
 
@@ -189,6 +193,14 @@ Documenté dans CONTEXTE-PROJET.md :
 - Décision : pas d'occurrence significative attendue sur les 1772 notes admin,
   gestion manuelle si rencontrée.
 
----
+## Dépendances externes
 
-*Dernière mise à jour : 2026-07-01 (PROMPT-13-AUDIT-BACKLOG)*
+### [exécuté 2026-07-03] Produire vault de référence sur MINITESTMIGRATION.enex
+
+**Projet** : enex2obsidian V1
+**Description** : le labo agentique (projet Claude.ai séparé enex2obsidian-agentic) utilise le vault produit par V1 sur MINITESTMIGRATION.enex comme référentiel de comparaison. Le vault de référence sert d'oracle au labo — jamais modifié pendant les cycles, comparaison uniquement en fin de labo.
+**Action réalisée** : exécution enex2obsidian V1 (état 123/0/0/0, aucune correction ni ajustement du pipeline) sur MINITESTMIGRATION.enex depuis ~/Migration-Evernote/, sortie vers ~/Migration-Evernote/labo-agentique/reference-vault/. Dry-run préalable pour validation volumétrie, puis migration réelle. Logs auto sous ~/Migration-Evernote/labo-agentique/logs/. Inspections visuelles Obsidian (accents + PJ) validées.
+**Livrable** : ~/Migration-Evernote/labo-agentique/reference-vault/MINITESTMIGRATION/
+**Log de session** : ~/Migration-Evernote/labo-agentique/reference-vault-execution-2026-07-03.md
+**Source** : conversation cadrage labo enex2obsidian-agentic, 2026-07-03
+**Statut** : exécuté 2026-07-03. En attente de livraison au projet Claude.ai labo (emplacement de destination défini par SPECS-LABO).
