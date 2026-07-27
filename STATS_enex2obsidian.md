@@ -16,12 +16,14 @@
   `git log --format='%at' | sort -n | awk 'NR==1{f=$1} END{printf "%d jours\n", ($1-f)/86400}'`
 - **Plus longue interruption entre deux commits** : 1,07 jour
   `git log --format='%at' | sort -n | awk 'NR>1{g=$1-p; if(g>m)m=g} {p=$1} END{printf "%.2f jours\n", m/86400}'`
+> **Note — métriques git.** Valeurs ci-dessus mesurées le 2026-07-26 (développement). L'historique a été réécrit le 2026-07-27 (publication, `git filter-repo`), donc l'état git courant diffère : **51 commits, dernier commit 2026-07-27, 6 jours actifs**. Fenêtre de développement réelle : **2026-06-29 → 2026-07-03**.
+
 - **Nombre de fichiers de code, et lignes de code par langage** (hors `.venv`, `.git`, `__pycache__`) :
   - `.py` : 14 fichiers, 5454 lignes
 
   `find . -name '*.py' -not -path './.venv/*' -not -path './__pycache__/*' | wc -l`
   `find . -name '*.py' -not -path './.venv/*' -not -path './__pycache__/*' -print0 | xargs -0 cat | wc -l`
-- **Nombre de fichiers markdown de documentation, et lignes totales** : 7 fichiers, 2552 lignes (documentation rédigée).
+- **Nombre de fichiers markdown de documentation, et lignes totales** : 6 fichiers, 2499 lignes (documentation rédigée).
   Aucun contenu non documentaire en `.md` dans ce dépôt (les fixtures de test sont au format `.enex`, pas `.md`). Le chiffre inclut désormais les fichiers `STATS` et `FICHE_PASSATION` produits pour cet exercice.
   `find . -name '*.md' -not -path './.git/*' -not -path './.venv/*' -not -path './.pytest_cache/*' | wc -l`
   `find . -name '*.md' -not -path './.git/*' -not -path './.venv/*' -not -path './.pytest_cache/*' -print0 | xargs -0 cat | wc -l`
@@ -59,7 +61,7 @@ Vérification de l'état courant **et** de l'historique git.
 
 - **Modules source** (.py hors test) : 10
 - **Dépendances runtime** : 5 (lxml, markdownify, python-slugify, python-dateutil, pyyaml) + pytest
-- **Ratio documentation / code** : 0,45 : 1 (2439 lignes `.md` pour 5454 lignes `.py`)
+- **Ratio documentation / code** : 0,46 : 1 (2499 lignes `.md` pour 5454 lignes `.py`)
 - **Annotations de type** : présentes (60 occurrences `->` / `from __future__ import annotations`)
 - **Packaging installable** : absent
 - **Intégration continue** : absente
