@@ -14,6 +14,11 @@ logs/
 .codex/
 PROMPT-*.md
 
+# Couverture de tests (pytest-cov / coverage.py)
+.coverage
+.coverage.*
+htmlcov/
+
 # Exception : fixtures de test synthétiques sans données perso
 !tests/fixtures/testmigration.enex
 !tests/fixtures/malformed.enex
