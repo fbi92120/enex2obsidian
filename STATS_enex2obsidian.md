@@ -60,11 +60,42 @@ Vérification de l'état courant **et** de l'historique git.
 ## Autres mesures (critères de livraison)
 
 - **Modules source** (.py hors test) : 10
-- **Dépendances runtime** : 5 (lxml, markdownify, python-slugify, python-dateutil, pyyaml) + pytest
+- **Dépendances runtime** : 5 (lxml, markdownify, python-slugify, python-dateutil, pyyaml) + pytest + pytest-cov (tests)
 - **Ratio documentation / code** : 0,46 : 1 (2499 lignes `.md` pour 5454 lignes `.py`)
 - **Annotations de type** : présentes (60 occurrences `->` / `from __future__ import annotations`)
 - **Packaging installable** : absent
 - **Intégration continue** : absente
 - **Outillage lint / format / typecheck** : absent
 - **LICENSE** : absent
+
+---
+
+## Couverture de tests (`pytest --cov`)
+
+*Mesure du 2026-07-29. Commande : `.venv/bin/pytest --cov=src`.*
+*Nécessite `pytest-cov` (déclaré dans `requirements.txt`).*
+
+Résultat de collecte : **123 passed** en ~4 s.
+
+**Couverture globale : 90 %** (646 instructions, 63 non couvertes).
+
+```
+Name                         Stmts   Miss  Cover
+------------------------------------------------
+src/__init__.py                  0      0   100%
+src/attachment_handler.py      104     10    90%
+src/content_converter.py       113     23    80%
+src/enex_parser.py              93     14    85%
+src/filename_normalizer.py      43      0   100%
+src/metadata_extractor.py       62      3    95%
+src/notebook_selector.py        10      0   100%
+src/reporter.py                101      2    98%
+src/writer.py                  120     11    91%
+------------------------------------------------
+TOTAL                          646     63    90%
+```
+
+Lecture : couverture homogène et élevée. Les points bas relatifs sont
+`content_converter.py` (80 %) et `enex_parser.py` (85 %) — branches de
+conversion/parsing d'entrées atypiques non exercées.
 
